@@ -22,6 +22,7 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
     target_colors_hsl: list of (h, s, l) tuples, one per batch item (or one for all).
     """
     def post_cfg_fn(args):
+        """Post-CFG hook: project to LCS, apply color intervention, reconstruct."""
         denoised = args["denoised"]  # [B, 16, H, W] in process_in space
         sigma = args["sigma"]
 
@@ -186,8 +187,17 @@ def _hue_lerp(h1, h2, t):
 
 
 class LCSColorIntervene(io.ComfyNode):
+    """Steer colors during FLUX generation via the Latent Color Subspace.
+
+    Installs a post-CFG hook that projects the denoised prediction into the
+    3D LCS, shifts it toward the target color (Type I, Type II, or interpolated),
+    preserves the 61D residual, and writes the modified prediction back.
+    Active only during [start_step, end_step].
+    """
+
     @classmethod
     def define_schema(cls) -> io.Schema:
+        """Define inputs (MODEL, LCS_DATA, color, strength, mode, steps, mask) and MODEL output."""
         return io.Schema(
             node_id="LCSColorIntervene",
             display_name="LCS Color Intervene",
@@ -217,6 +227,7 @@ class LCSColorIntervene(io.ComfyNode):
     @classmethod
     def execute(cls, model, lcs_data, color, strength, mode, start_step, end_step,
                 mask=None) -> io.NodeOutput:
+        """Clone model, attach LCS color intervention hook. Returns patched MODEL."""
         m = model.clone()
         h, s, l = hex_to_hsl(color)
         hook = _build_post_cfg_fn(lcs_data, [(h, s, l)], strength, mode, start_step, end_step, mask)
@@ -225,8 +236,16 @@ class LCSColorIntervene(io.ComfyNode):
 
 
 class LCSColorBatch(io.ComfyNode):
+    """Apply different target colors to each batch item for multi-color generation.
+
+    Parses comma-separated hex colors and installs a post-CFG hook that applies
+    a distinct color target per batch index. Also outputs batch_size (INT) for
+    connecting to EmptyLatentImage.
+    """
+
     @classmethod
     def define_schema(cls) -> io.Schema:
+        """Define inputs (MODEL, LCS_DATA, colors string, strength, mode, steps, mask) and (MODEL, INT) outputs."""
         return io.Schema(
             node_id="LCSColorBatch",
             display_name="LCS Color Batch",
@@ -253,6 +272,7 @@ class LCSColorBatch(io.ComfyNode):
     @classmethod
     def execute(cls, model, lcs_data, colors, strength, mode, start_step, end_step,
                 mask=None) -> io.NodeOutput:
+        """Clone model, attach per-batch color hooks. Returns (MODEL, batch_size INT)."""
         m = model.clone()
 
         # Parse comma-separated hex colors

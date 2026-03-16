@@ -58,8 +58,15 @@ def _latent_to_color_preview(samples, lcs_data, sigma, upscale=8):
 
 
 class LCSPreviewColors(io.ComfyNode):
+    """Visualize latent colors without VAE decoding — pure math color preview from LCS.
+
+    Projects latent patches into the 3D LCS, normalizes to t=50, decodes to HSL,
+    converts to RGB, and upscales 8x to pixel resolution. Produces a [B, H, W, 3] IMAGE.
+    """
+
     @classmethod
     def define_schema(cls) -> io.Schema:
+        """Define inputs (LATENT, LCS_DATA, sigma) and IMAGE output."""
         return io.Schema(
             node_id="LCSPreviewColors",
             display_name="LCS Preview Colors",
@@ -78,14 +85,23 @@ class LCSPreviewColors(io.ComfyNode):
 
     @classmethod
     def execute(cls, latent, lcs_data, sigma) -> io.NodeOutput:
+        """Decode latent to LCS color preview. Returns IMAGE [B, H, W, 3]."""
         samples = latent["samples"]
         result = _latent_to_color_preview(samples, lcs_data, sigma, upscale=8)
         return io.NodeOutput(result)
 
 
 class LCSStepObserver(io.ComfyNode):
+    """Patches model to save per-step LCS color previews to ComfyUI's temp directory.
+
+    Installs a post-CFG hook that generates a color preview image for the first
+    batch item at each sampling step. Images are saved as lcs_step_NNN_sX.XXX.png.
+    Does not modify the denoised prediction.
+    """
+
     @classmethod
     def define_schema(cls) -> io.Schema:
+        """Define inputs (MODEL, LCS_DATA) and MODEL output."""
         return io.Schema(
             node_id="LCSStepObserver",
             display_name="LCS Step Observer",
@@ -102,10 +118,12 @@ class LCSStepObserver(io.ComfyNode):
 
     @classmethod
     def execute(cls, model, lcs_data) -> io.NodeOutput:
+        """Clone model, attach step observer hook. Returns patched MODEL."""
         m = model.clone()
         step_counter = [0]
 
         def observer_fn(args):
+            """Post-CFG hook: generate color preview and save to temp directory."""
             denoised = args["denoised"]
             sigma = args["sigma"]
             sigma_val = float(sigma.flatten()[0])

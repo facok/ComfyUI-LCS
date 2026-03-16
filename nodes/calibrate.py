@@ -15,8 +15,16 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 
 class LCSCalibrate(io.ComfyNode):
+    """Compute LCS basis and anchors from a FLUX VAE via PCA on solid-color images.
+
+    Samples num_colors uniform HSV colors, encodes them through the VAE,
+    runs PCA on the averaged 64-dim patch vectors, and extracts the 3D basis B,
+    mean μ, and 8 anchor color positions. Auto-saves result to data/ directory.
+    """
+
     @classmethod
     def define_schema(cls) -> io.Schema:
+        """Define inputs (VAE, num_colors, image_size) and LCS_DATA output."""
         return io.Schema(
             node_id="LCSCalibrate",
             display_name="LCS Calibrate",
@@ -36,6 +44,7 @@ class LCSCalibrate(io.ComfyNode):
 
     @classmethod
     def execute(cls, vae, num_colors, image_size) -> io.NodeOutput:
+        """Run PCA calibration and save result as .safetensors. Returns LCS_DATA."""
         lcs_data = calibrate(vae, num_colors=num_colors, image_size=image_size)
 
         # Auto-save to data/ directory
@@ -52,8 +61,15 @@ class LCSCalibrate(io.ComfyNode):
 
 
 class LCSLoadData(io.ComfyNode):
+    """Load cached LCS calibration data from .safetensors, or auto-calibrate if VAE is provided.
+
+    Scans the data/ directory for available calibration files. When set to 'auto',
+    loads the default file or runs calibration if no cache exists and a VAE is connected.
+    """
+
     @classmethod
     def define_schema(cls) -> io.Schema:
+        """Define inputs (calibration_file combo, optional VAE) and LCS_DATA output."""
         # Scan data/ dir for available calibration files
         files = ["auto"]
         if os.path.isdir(DATA_DIR):
@@ -79,6 +95,7 @@ class LCSLoadData(io.ComfyNode):
 
     @classmethod
     def execute(cls, calibration_file, vae=None) -> io.NodeOutput:
+        """Load or auto-generate calibration data. Returns LCS_DATA."""
         loaded = False
 
         if calibration_file != "auto":

@@ -4,6 +4,12 @@ import torch
 
 @dataclass
 class LCSData:
+    """Calibration data for the Latent Color Subspace.
+
+    Produced by PCA on FLUX VAE-encoded solid-color images. Flows between
+    all LCS nodes as the shared LCS_DATA custom type.
+    """
+
     basis: torch.Tensor        # [64, 3] PCA basis B (orthonormal columns)
     mean: torch.Tensor         # [64] PCA mean mu
     anchor_lcs: torch.Tensor   # [8, 3] LCS coords of 8 anchor colors [R,B,G,M,C,Y,Black,White]

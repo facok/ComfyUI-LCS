@@ -11,7 +11,10 @@ from .nodes.observe import LCSPreviewColors, LCSStepObserver
 
 
 class LCSExtension(ComfyExtension):
+    """V3 ComfyExtension providing all LCS nodes to ComfyUI."""
+
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
+        """Return all 6 LCS node classes."""
         return [
             LCSCalibrate,
             LCSLoadData,
@@ -23,6 +26,7 @@ class LCSExtension(ComfyExtension):
 
 
 async def comfy_entrypoint() -> LCSExtension:
+    """V3 async entry point called by ComfyUI on startup."""
     return LCSExtension()
 
 

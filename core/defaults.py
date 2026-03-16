@@ -50,6 +50,7 @@ _beta_tensor = None
 
 
 def get_alpha_table():
+    """Return α_t table as tensor [51, 3], cached after first call."""
     global _alpha_tensor
     if _alpha_tensor is None:
         _alpha_tensor = torch.tensor(ALPHA_T, dtype=torch.float32)  # [51, 3]
@@ -57,6 +58,7 @@ def get_alpha_table():
 
 
 def get_beta_table():
+    """Return β_t table as tensor [51, 3], cached after first call."""
     global _beta_tensor
     if _beta_tensor is None:
         _beta_tensor = torch.tensor(BETA_T, dtype=torch.float32)  # [51, 3]
