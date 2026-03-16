@@ -450,8 +450,8 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
 # Preset names for the combo widget. Actual values live in web/js/tone_preset.js
 # which syncs them into the slider widgets on the frontend.
 TONE_PRESET_NAMES = [
-    "Cinematic", "HDR", "Vivid", "Dramatic", "Low Key",
-    "High Key", "Warm", "Cool", "Desaturated", "Custom",
+    "Custom", "Base", "Cinematic", "HDR", "Vivid", "Dramatic",
+    "Low Key", "High Key", "Warm", "Cool", "Desaturated",
 ]
 
 

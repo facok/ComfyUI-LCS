@@ -3,6 +3,7 @@ import { app } from "../../../scripts/app.js";
 // Preset values — the single source of truth for preset parameters.
 // TONE_PRESET_NAMES in nodes/intervene.py must list matching keys.
 const TONE_PRESETS = {
+    "Base":        { contrast: 1.0,  brightness:  0.0,  saturation: 1.0,  color_temperature: 0.0 },
     "Cinematic":   { contrast: 1.20, brightness: -0.05, saturation: 0.90, color_temperature: 0.05 },
     "HDR":         { contrast: 1.40, brightness:  0.0,  saturation: 1.20, color_temperature: 0.0 },
     "Vivid":       { contrast: 1.10, brightness:  0.0,  saturation: 1.50, color_temperature: 0.0 },
