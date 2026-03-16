@@ -10,11 +10,11 @@ This plugin steers colors directly in the 3D LCS during diffusion sampling — n
 
 > [中文版 README](README_zh.md)
 
-## LCS vs Post-Processing
+## LCS vs Traditional Post-Processing
 
-LCS operates **during** diffusion sampling, not after — this is the key difference from traditional color grading.
+LCS operates **during** diffusion sampling, not after — this is the key difference from traditional color grading (Photoshop, filters, etc.).
 
-| | Post-Processing | LCS |
+| | Traditional Post-Processing | LCS |
 |---|---|---|
 | **When** | After VAE decode, in pixel space | During sampling, in latent space |
 | **Mechanism** | Color filter on the final image | Modifies 3D color subspace mid-generation |
