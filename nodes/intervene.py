@@ -285,8 +285,9 @@ class LCSColorBatch(io.ComfyNode):
         return io.NodeOutput(m, batch_size)
 
 
-def _build_contrast_fn(lcs_data, contrast, brightness, saturation, start_step, end_step, mask):
-    """Build the post_cfg_function closure for contrast/brightness/saturation adjustment.
+def _build_contrast_fn(lcs_data, contrast, brightness, saturation, color_temperature,
+                       start_step, end_step, mask):
+    """Build the post_cfg_function closure for contrast/brightness/saturation/temperature adjustment.
 
     Operates directly in 3D LCS space by decomposing into lightness (projection
     onto achromatic axis) and chroma (perpendicular residual). No HSL round-trip.
@@ -366,6 +367,21 @@ def _build_contrast_fn(lcs_data, contrast, brightness, saturation, start_step, e
         l_mean = l_scalar.mean(dim=-1, keepdim=True)  # [B, 1]
         l_new = (l_scalar - l_mean) * contrast + l_mean + brightness
 
+        # Adjust color temperature: shift chroma along warm↔cool axis
+        if color_temperature != 0.0:
+            # Compute chromatic projections of the 6 hue anchors (indices 0-5)
+            # Red=0, Blue=1, Green=2, Magenta=3, Cyan=4, Yellow=5
+            def _anchor_chroma(idx):
+                anc = anchor_lcs[idx]  # [3]
+                l_a = ((anc - black) * a).sum() / a_sq
+                return anc - (black + l_a * a)
+
+            warm_center = (_anchor_chroma(0) + _anchor_chroma(5)) / 2  # Red + Yellow
+            cool_center = (_anchor_chroma(1) + _anchor_chroma(4)) / 2  # Blue + Cyan
+            warm_dir = warm_center - cool_center
+            warm_dir = warm_dir / warm_dir.norm()  # unit vector
+            chroma = chroma + color_temperature * warm_dir
+
         # Adjust saturation
         chroma_new = chroma * saturation
 
@@ -409,22 +425,23 @@ def _build_contrast_fn(lcs_data, contrast, brightness, saturation, start_step, e
 
 
 class LCSContrastAdjust(io.ComfyNode):
-    """Adjust contrast, brightness, and saturation in the Latent Color Subspace.
+    """Adjust contrast, brightness, saturation, and color temperature in the Latent Color Subspace.
 
     Decomposes each patch into lightness (projection onto black→white axis)
     and chroma (perpendicular residual). Contrast scales lightness around its
-    mean, brightness shifts it, saturation scales the chroma magnitude.
+    mean, brightness shifts it, saturation scales the chroma magnitude, and
+    color temperature shifts chroma along the warm↔cool axis.
     All math is done directly in 3D LCS — no HSL round-trip needed.
     """
 
     @classmethod
     def define_schema(cls) -> io.Schema:
-        """Define inputs and MODEL output for contrast/brightness/saturation adjustment."""
+        """Define inputs and MODEL output for contrast/brightness/saturation/temperature adjustment."""
         return io.Schema(
             node_id="LCSContrastAdjust",
             display_name="LCS Contrast Adjust",
             category="LCS/intervention",
-            description="Adjust contrast, brightness, and saturation via Latent Color Subspace",
+            description="Adjust contrast, brightness, saturation, and color temperature via Latent Color Subspace",
             inputs=[
                 io.Model.Input("model"),
                 LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSCalibrate or LCSLoadData"),
@@ -434,6 +451,8 @@ class LCSContrastAdjust(io.ComfyNode):
                                tooltip="Lightness shift (>0 = brighter, <0 = darker)"),
                 io.Float.Input("saturation", default=1.0, min=0.0, max=3.0, step=0.05,
                                tooltip="Saturation multiplier (>1 = more vivid, <1 = more muted, 0 = grayscale)"),
+                io.Float.Input("color_temperature", default=0.0, min=-2.0, max=2.0, step=0.05,
+                               tooltip="Color temperature shift (>0 = warmer/amber, <0 = cooler/blue)"),
                 io.Int.Input("start_step", default=5, min=0, max=50,
                              tooltip="First step to apply adjustment"),
                 io.Int.Input("end_step", default=15, min=0, max=50,
@@ -447,13 +466,13 @@ class LCSContrastAdjust(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, model, lcs_data, contrast, brightness, saturation,
+    def execute(cls, model, lcs_data, contrast, brightness, saturation, color_temperature,
                 start_step, end_step, mask=None) -> io.NodeOutput:
-        """Clone model, attach LCS contrast/brightness/saturation hook. Returns patched MODEL."""
+        """Clone model, attach LCS contrast/brightness/saturation/temperature hook. Returns patched MODEL."""
         m = model.clone()
         # Skip hook entirely when all parameters are at default (true no-op)
-        if contrast != 1.0 or brightness != 0.0 or saturation != 1.0:
+        if contrast != 1.0 or brightness != 0.0 or saturation != 1.0 or color_temperature != 0.0:
             hook = _build_contrast_fn(lcs_data, contrast, brightness, saturation,
-                                      start_step, end_step, mask)
+                                      color_temperature, start_step, end_step, mask)
             m.set_model_sampler_post_cfg_function(hook)
         return io.NodeOutput(m)
