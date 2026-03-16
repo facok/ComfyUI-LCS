@@ -136,6 +136,21 @@ Enter comma-separated hex colors (e.g., `#FF0000,#00FF00,#0000FF`). Each color a
 - **start_step / end_step**: Step range for intervention. Paper optimal: 8–10 of 50 steps.
 - **mask**: Optional. Bilinearly downsampled to patch grid for localized control.
 
+## LCS vs Post-Processing
+
+LCS operates **during** diffusion sampling, not after — this is the key difference from traditional color grading.
+
+| | Post-Processing | LCS |
+|---|---|---|
+| **When** | After VAE decode, in pixel space | During sampling, in latent space |
+| **Mechanism** | Color filter on the final image | Modifies 3D color subspace mid-generation |
+| **Model awareness** | None — structure is already locked | Model adapts to color shifts in subsequent steps |
+| **Result** | Colors can look "painted on" — shadows/skin tones may shift unnaturally | Colors look like the model intended them — content harmonizes naturally |
+
+Example: for a warm orange sunset, post-processing tints everything orange (muddying shadows), while LCS nudges colors early in sampling so the model generates clouds, lighting, and reflections that are *coherent* with warm tones.
+
+The paper's core insight: color and structure are **orthogonal** in the latent patch space, so you can steer one without disturbing the other — impossible in pixel space where they are entangled.
+
 ## How It Works
 
 1. **Project**: Convert denoised prediction to 64D patch space, project onto 3D LCS basis
