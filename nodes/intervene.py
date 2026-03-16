@@ -459,8 +459,8 @@ TONE_PRESETS = {
     "Dramatic":    {"contrast": 1.50, "brightness": -0.10, "saturation": 0.85, "color_temperature": 0.0},
     "Low Key":     {"contrast": 1.30, "brightness": -0.20, "saturation": 0.80, "color_temperature": 0.0},
     "High Key":    {"contrast": 0.80, "brightness":  0.20, "saturation": 0.90, "color_temperature": 0.0},
-    "Warm":        {"contrast": 1.0,  "brightness":  0.0,  "saturation": 1.0,  "color_temperature": 0.15},
-    "Cool":        {"contrast": 1.0,  "brightness":  0.0,  "saturation": 1.0,  "color_temperature": -0.15},
+    "Warm":        {"contrast": 1.05, "brightness":  0.03, "saturation": 1.10, "color_temperature": 0.30},
+    "Cool":        {"contrast": 1.05, "brightness":  0.0,  "saturation": 1.05, "color_temperature": -0.30},
     "Desaturated": {"contrast": 1.0,  "brightness":  0.0,  "saturation": 0.40, "color_temperature": 0.0},
 }
 

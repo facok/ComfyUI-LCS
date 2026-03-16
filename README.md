@@ -144,8 +144,8 @@ Select a preset — sliders update in real-time. Tweak after selecting for fine-
 | Dramatic | 1.50 | -0.10 | 0.85 | 0.0 |
 | Low Key | 1.30 | -0.20 | 0.80 | 0.0 |
 | High Key | 0.80 | 0.20 | 0.90 | 0.0 |
-| Warm | 1.0 | 0.0 | 1.0 | 0.15 |
-| Cool | 1.0 | 0.0 | 1.0 | -0.15 |
+| Warm | 1.05 | 0.03 | 1.10 | 0.30 |
+| Cool | 1.05 | 0.0 | 1.05 | -0.30 |
 | Desaturated | 1.0 | 0.0 | 0.40 | 0.0 |
 
 ## How It Works
