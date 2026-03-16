@@ -4,11 +4,28 @@ Training-free color control via the **Latent Color Subspace**.
 
 > **Note:** This is an unofficial community implementation. For the official code, see [ExplainableML/LCS](https://github.com/ExplainableML/LCS).
 
-Based on the paper ["The Latent Color Subspace"](https://arxiv.org/abs/2603.12261v1) (ICML 2026), which discovers that color in diffusion model latent patch spaces lives in a **3D subspace** (found via PCA with 100% color variance). The remaining 61 dimensions encode structure and detail, orthogonal to color.
+Based on ["The Latent Color Subspace"](https://arxiv.org/abs/2603.12261v1) (ICML 2026): color in diffusion model latent patch spaces lives in a **3D subspace** (PCA captures 100% color variance), while the remaining 61 dimensions encode structure and detail orthogonally.
 
-This plugin manipulates colors directly in the 3D LCS during diffusion sampling — no model training, no LoRA, no post-processing.
+This plugin steers colors directly in the 3D LCS during diffusion sampling — no training, no LoRA, no post-processing.
 
-### Tested Models
+> [中文版 README](README_zh.md)
+
+## LCS vs Post-Processing
+
+LCS operates **during** diffusion sampling, not after — this is the key difference from traditional color grading.
+
+| | Post-Processing | LCS |
+|---|---|---|
+| **When** | After VAE decode, in pixel space | During sampling, in latent space |
+| **Mechanism** | Color filter on the final image | Modifies 3D color subspace mid-generation |
+| **Model awareness** | None — structure already locked | Model adapts to color shifts in subsequent steps |
+| **Result** | Colors can look "painted on" | Colors look naturally intended by the model |
+
+For example: to get a warm orange sunset, post-processing tints everything orange (muddying shadows and skin tones), while LCS nudges the color subspace early in sampling so clouds, lighting, and reflections are *coherently* warm.
+
+The core insight: color and structure are **orthogonal** in the latent patch space — you can steer one without disturbing the other.
+
+## Tested Models
 
 | Model | Status |
 |-------|--------|
@@ -16,33 +33,62 @@ This plugin manipulates colors directly in the 3D LCS during diffusion sampling 
 | z-image | Tested |
 | z-image-turbo | Tested |
 
-The LCS is calibrated per-VAE, so it should work with any model that uses a compatible VAE architecture. If you test with other models, feel free to report your results.
-
-> [中文版 README](README_zh.md)
+LCS calibrates per-VAE, so it should work with any model using a compatible VAE. Feel free to report results with other models.
 
 ## Features
 
-- **Color Steering** — Push generated image colors toward any target color
-- **Batch Multi-Color** — Apply different colors to each image in a batch
-- **Tone Adjustment** — Contrast, brightness, saturation, color temperature with one-click presets
-- **Localized Control** — Optional mask input for region-specific color changes
+- **Color Steering** — Push colors toward any target color
+- **Batch Multi-Color** — Different colors per batch item
+- **Tone Adjustment** — Contrast, brightness, saturation, temperature with one-click presets
+- **Localized Control** — Optional mask for region-specific changes
 - **Latent Color Preview** — Visualize color structure without VAE decoding
-- **Step Observer** — Save per-step color previews to inspect the diffusion process
+- **Step Observer** — Per-step color previews for debugging
 
 ## Installation
 
-Clone into your ComfyUI custom nodes directory:
-
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/YOUR_USERNAME/ComfyUI-LCS.git
+git clone https://github.com/facok/ComfyUI-LCS.git
 ```
 
-Install dependencies (usually already present in ComfyUI):
+Dependencies (usually already present in ComfyUI):
 
 ```bash
 pip install einops safetensors
 ```
+
+## Quick Start
+
+### Basic Color Control
+
+```
+LCS Load Data → LCS Color Intervene → KSampler
+                       ↑
+                  (pick a color)
+```
+
+1. **LCS Load Data** — connect your VAE (auto-calibrates on first run)
+2. **LCS Color Intervene** — connect MODEL and LCS_DATA, pick a target color
+3. Connect the output MODEL to KSampler
+
+### Tone Adjustment
+
+```
+LCS Load Data → LCS Tone Adjust → KSampler
+```
+
+1. **LCS Load Data** → **LCS Tone Adjust**
+2. Select a preset (e.g., "Cinematic") or adjust sliders manually
+
+### Multi-Color Batch
+
+```
+LCS Load Data → LCS Color Batch → KSampler
+                      ↓
+                  batch_size → EmptyLatentImage
+```
+
+Enter comma-separated hex colors (e.g., `#FF0000,#00FF00,#0000FF`). Each color applies to one batch item.
 
 ## Nodes
 
@@ -52,26 +98,40 @@ pip install einops safetensors
 |------|-------------|
 | **LCS Load Data** | Auto-calibrate and cache LCS data per-VAE. Fingerprints VAE weights for automatic cache management — just connect your VAE. |
 
-Calibration runs once per VAE and is cached automatically. Subsequent runs load instantly from cache.
+Calibration runs once per VAE and caches automatically. Subsequent runs load instantly.
 
 ### Intervention
 
 | Node | Description |
 |------|-------------|
-| **LCS Color Intervene** | Steer colors toward a target during generation. Supports Type I (LCS shift), Type II (HSL shift), or interpolated mode. |
-| **LCS Color Batch** | Apply different target colors per batch item. Outputs `batch_size` for connecting to EmptyLatentImage. |
-| **LCS Tone Adjust** | Adjust contrast, brightness, saturation, and color temperature. Includes preset dropdown with real-time slider sync. |
+| **LCS Color Intervene** | Steer colors toward a target. Supports Type I (LCS shift), Type II (HSL shift), or interpolated mode. |
+| **LCS Color Batch** | Different target colors per batch item. Outputs `batch_size` for EmptyLatentImage. |
+| **LCS Tone Adjust** | Contrast, brightness, saturation, temperature. Preset dropdown with real-time slider sync. |
 
 ### Observation
 
 | Node | Description |
 |------|-------------|
-| **LCS Preview Colors** | Decode latent colors to an RGB preview image without VAE decoding. |
-| **LCS Step Observer** | Save per-step color preview PNGs to ComfyUI's temp directory for debugging. |
+| **LCS Preview Colors** | Decode latent colors to RGB preview without VAE decoding. |
+| **LCS Step Observer** | Save per-step color preview PNGs to ComfyUI temp directory. |
+
+## Intervention Modes
+
+| Mode | Description | Best For |
+|------|-------------|----------|
+| **interpolated** (default) | Blends Type I and Type II using sigma | General use |
+| **type_i** | Direct translation in 3D LCS space | Strong global color shifts |
+| **type_ii** | Per-patch HSL interpolation via bicone geometry | Precise local color control |
+
+## Key Parameters
+
+- **strength** (0.0–2.0): Intervention intensity. 1.0 = full, 0.0 = none.
+- **start_step / end_step**: Step range for intervention. Paper optimal: steps 8–10 of 50.
+- **mask**: Optional. Downsampled to patch grid for localized control.
 
 ## Tone Presets
 
-Select a preset from the dropdown — sliders update in real-time. Tweak sliders after selecting a preset for fine-tuning. Select **Custom** to set values manually without preset interference.
+Select a preset — sliders update in real-time. Tweak after selecting for fine-tuning. Select **Custom** to set values manually.
 
 | Preset | Contrast | Brightness | Saturation | Temperature |
 |--------|----------|------------|------------|-------------|
@@ -86,80 +146,13 @@ Select a preset from the dropdown — sliders update in real-time. Tweak sliders
 | Cool | 1.0 | 0.0 | 1.0 | -0.15 |
 | Desaturated | 1.0 | 0.0 | 0.40 | 0.0 |
 
-## Quick Start
-
-### Basic Color Control
-
-```
-LCS Load Data → LCS Color Intervene → KSampler
-                       ↑
-                  (pick a color)
-```
-
-1. Add **LCS Load Data** — connect your VAE (first run only, calibrates automatically)
-2. Add **LCS Color Intervene** — connect MODEL and LCS_DATA
-3. Pick a target color, set strength (default 1.0)
-4. Connect the output MODEL to your KSampler
-
-### Tone Adjustment
-
-```
-LCS Load Data → LCS Tone Adjust → KSampler
-                      ↑
-               (select preset or
-                adjust sliders)
-```
-
-1. Add **LCS Load Data** → **LCS Tone Adjust**
-2. Select a preset (e.g., "Cinematic") or use Custom mode
-3. Fine-tune sliders as needed
-
-### Multi-Color Batch
-
-```
-LCS Load Data → LCS Color Batch → KSampler
-                      ↓
-                  batch_size → EmptyLatentImage
-```
-
-Enter comma-separated hex colors (e.g., `#FF0000,#00FF00,#0000FF`). Each color applies to one batch item.
-
-## Intervention Modes
-
-| Mode | Description | Best For |
-|------|-------------|----------|
-| **interpolated** (default) | Blends Type I and Type II using sigma as weight | General use |
-| **type_i** | Direct translation in 3D LCS space | Strong global color shifts |
-| **type_ii** | Per-patch HSL interpolation via bicone geometry | Precise local color control |
-
-## Key Parameters
-
-- **strength** (0.0–2.0): Intervention intensity. 1.0 = full, 0.0 = none.
-- **start_step / end_step**: Step range for intervention. Paper optimal: 8–10 of 50 steps.
-- **mask**: Optional. Bilinearly downsampled to patch grid for localized control.
-
-## LCS vs Post-Processing
-
-LCS operates **during** diffusion sampling, not after — this is the key difference from traditional color grading.
-
-| | Post-Processing | LCS |
-|---|---|---|
-| **When** | After VAE decode, in pixel space | During sampling, in latent space |
-| **Mechanism** | Color filter on the final image | Modifies 3D color subspace mid-generation |
-| **Model awareness** | None — structure is already locked | Model adapts to color shifts in subsequent steps |
-| **Result** | Colors can look "painted on" — shadows/skin tones may shift unnaturally | Colors look like the model intended them — content harmonizes naturally |
-
-Example: for a warm orange sunset, post-processing tints everything orange (muddying shadows), while LCS nudges colors early in sampling so the model generates clouds, lighting, and reflections that are *coherent* with warm tones.
-
-The paper's core insight: color and structure are **orthogonal** in the latent patch space, so you can steer one without disturbing the other — impossible in pixel space where they are entangled.
-
 ## How It Works
 
-1. **Project**: Convert denoised prediction to 64D patch space, project onto 3D LCS basis
-2. **Decompose**: Separate the 3D color coordinates from the 61D structural residual
-3. **Normalize**: Transform to the reference timestep (t=50) using learned alpha/beta statistics
-4. **Manipulate**: Shift colors, adjust tone, or apply other transformations in 3D LCS
-5. **Reconstruct**: Denormalize, add back the preserved 61D residual, convert to latent space
+1. **Project** — Convert denoised prediction to 64D patch space, project onto 3D LCS basis
+2. **Decompose** — Separate 3D color coordinates from the 61D structural residual
+3. **Normalize** — Transform to reference timestep (t=50) using learned alpha/beta statistics
+4. **Manipulate** — Shift colors, adjust tone, or apply other transformations in 3D LCS
+5. **Reconstruct** — Denormalize, add back the preserved 61D residual, convert to latent space
 
 The 61D residual (structure, texture, detail) is never modified — only the 3D color subspace is touched.
 
@@ -200,7 +193,7 @@ Official repository: [ExplainableML/LCS](https://github.com/ExplainableML/LCS)
 
 ## Acknowledgments
 
-Thanks to the authors of [The Latent Color Subspace](https://github.com/ExplainableML/LCS) — Mateusz Pach, Jessica Bader, Quentin Bouniot, Serge Belongie, and Zeynep Akata — for their research making training-free color control possible.
+Thanks to Mateusz Pach, Jessica Bader, Quentin Bouniot, Serge Belongie, and Zeynep Akata for their research making training-free color control possible.
 
 ## License
 
