@@ -1,4 +1,4 @@
-"""Intervention nodes: LCSColorIntervene and LCSColorBatch."""
+"""Intervention nodes: LCSColorIntervene, LCSColorBatch, and LCSContrastAdjust."""
 
 import torch
 import torch.nn.functional as F
@@ -283,3 +283,173 @@ class LCSColorBatch(io.ComfyNode):
         hook = _build_post_cfg_fn(lcs_data, target_hsl, strength, mode, start_step, end_step, mask)
         m.set_model_sampler_post_cfg_function(hook)
         return io.NodeOutput(m, batch_size)
+
+
+def _build_contrast_fn(lcs_data, contrast, brightness, saturation, start_step, end_step, mask):
+    """Build the post_cfg_function closure for contrast/brightness/saturation adjustment.
+
+    Operates directly in 3D LCS space by decomposing into lightness (projection
+    onto achromatic axis) and chroma (perpendicular residual). No HSL round-trip.
+    """
+    def post_cfg_fn(args):
+        """Post-CFG hook: project to LCS, adjust contrast/brightness/saturation, reconstruct."""
+        denoised = args["denoised"]  # [B, 16, H, W] in process_in space
+        sigma = args["sigma"]
+
+        # Determine current step
+        sigma_val = float(sigma.flatten()[0])
+
+        sigmas = args["model_options"]["transformer_options"]["sample_sigmas"]
+        step_index = None
+        matched = (sigmas == sigma_val).nonzero()
+        if len(matched) > 0:
+            step_index = matched[0].item()
+        else:
+            for i in range(len(sigmas) - 1):
+                if (sigmas[i] - sigma_val) * (sigmas[i + 1] - sigma_val) <= 0:
+                    step_index = i
+                    break
+        if step_index is None:
+            return denoised
+
+        if step_index < start_step or step_index > end_step:
+            return denoised
+
+        device = denoised.device
+        dtype = denoised.dtype
+
+        ld = lcs_data.to(device, dtype)
+        B_mat = ld.basis        # [64, 3]
+        mu = ld.mean            # [64]
+        anchor_lcs = ld.anchor_lcs  # [8, 3]
+
+        # Convert from process_in to raw VAE space
+        raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
+
+        # Patchify
+        patches, h_len, w_len = patchify(raw)  # [B, L, 64]
+
+        # Project to LCS
+        projection = (patches - mu) @ B_mat  # [B, L, 3]
+
+        # Compute residual (61D orthogonal complement)
+        reconstruction = projection @ B_mat.T + mu  # [B, L, 64]
+        residual = patches - reconstruction  # [B, L, 64]
+
+        # Get timestep statistics
+        alpha_t, beta_t = get_alpha_beta(sigma_val, device=device)
+        alpha_t, beta_t = alpha_t.to(dtype), beta_t.to(dtype)
+        alpha_50, beta_50 = get_alpha_beta_t50(device=device)
+        alpha_50, beta_50 = alpha_50.to(dtype), beta_50.to(dtype)
+
+        # Normalize to t=50
+        c_norm = normalize_to_t50(projection, alpha_t, beta_t, alpha_50, beta_50)  # [B, L, 3]
+
+        # Achromatic axis: black → white in LCS anchor space
+        black = anchor_lcs[6]  # [3]
+        white = anchor_lcs[7]  # [3]
+        a = white - black      # [3]
+        a_sq = (a * a).sum()   # ||a||²
+
+        # Decompose into lightness + chroma
+        # l_scalar: scalar projection along achromatic axis, [B, L]
+        l_scalar = ((c_norm - black) * a).sum(dim=-1) / a_sq
+        # c_L: point on achromatic axis, [B, L, 3]
+        c_L = black + l_scalar.unsqueeze(-1) * a
+        # chroma: perpendicular component, [B, L, 3]
+        chroma = c_norm - c_L
+
+        # Adjust lightness: contrast around per-image mean + brightness shift
+        l_mean = l_scalar.mean(dim=-1, keepdim=True)  # [B, 1]
+        l_new = (l_scalar - l_mean) * contrast + l_mean + brightness
+        l_new = l_new.clamp(0, 1)
+
+        # Adjust saturation
+        chroma_new = chroma * saturation
+
+        # Reconstruct in normalized LCS space
+        new_c_norm = black + l_new.unsqueeze(-1) * a + chroma_new  # [B, L, 3]
+
+        # Apply mask if provided
+        if mask is not None:
+            mask_dev = mask.to(device=device, dtype=dtype)
+            if mask_dev.ndim == 3:
+                mask_dev = mask_dev[:1]
+            if mask_dev.ndim == 2:
+                mask_4d = mask_dev.unsqueeze(0).unsqueeze(0)
+            elif mask_dev.ndim == 3:
+                mask_4d = mask_dev.unsqueeze(1)
+            else:
+                mask_4d = mask_dev
+            mask_resized = F.interpolate(
+                mask_4d, size=(h_len, w_len), mode="bilinear", align_corners=False
+            )
+            mask_flat = mask_resized.reshape(1, -1, 1)
+            if mask_flat.shape[1] != new_c_norm.shape[1]:
+                mask_flat = mask_flat[:, :new_c_norm.shape[1], :]
+            new_c_norm = c_norm + mask_flat * (new_c_norm - c_norm)
+
+        # Denormalize back to timestep t
+        new_projection = denormalize_from_t50(new_c_norm, alpha_t, beta_t, alpha_50, beta_50)
+
+        # Reconstruct patches
+        patches_new = new_projection @ B_mat.T + mu + residual  # [B, L, 64]
+
+        # Unpatchify
+        raw_new = unpatchify(patches_new, h_len, w_len)  # [B, 16, H, W]
+
+        # Convert back to process_in space
+        modified = (raw_new - SHIFT_FACTOR) * SCALE_FACTOR
+
+        return modified.to(dtype)
+
+    return post_cfg_fn
+
+
+class LCSContrastAdjust(io.ComfyNode):
+    """Adjust contrast, brightness, and saturation in the Latent Color Subspace.
+
+    Decomposes each patch into lightness (projection onto black→white axis)
+    and chroma (perpendicular residual). Contrast scales lightness around its
+    mean, brightness shifts it, saturation scales the chroma magnitude.
+    All math is done directly in 3D LCS — no HSL round-trip needed.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        """Define inputs and MODEL output for contrast/brightness/saturation adjustment."""
+        return io.Schema(
+            node_id="LCSContrastAdjust",
+            display_name="LCS Contrast Adjust",
+            category="LCS/intervention",
+            description="Adjust contrast, brightness, and saturation via Latent Color Subspace",
+            inputs=[
+                io.Model.Input("model"),
+                LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSCalibrate or LCSLoadData"),
+                io.Float.Input("contrast", default=1.0, min=0.0, max=3.0, step=0.05,
+                               tooltip="Lightness contrast multiplier (>1 = more contrast, <1 = less, 1 = no change)"),
+                io.Float.Input("brightness", default=0.0, min=-1.0, max=1.0, step=0.05,
+                               tooltip="Lightness shift (>0 = brighter, <0 = darker)"),
+                io.Float.Input("saturation", default=1.0, min=0.0, max=3.0, step=0.05,
+                               tooltip="Saturation multiplier (>1 = more vivid, <1 = more muted, 0 = grayscale)"),
+                io.Int.Input("start_step", default=5, min=0, max=50,
+                             tooltip="First step to apply adjustment"),
+                io.Int.Input("end_step", default=15, min=0, max=50,
+                             tooltip="Last step to apply adjustment"),
+                io.Mask.Input("mask", optional=True,
+                              tooltip="Optional mask for localized adjustment"),
+            ],
+            outputs=[
+                io.Model.Output(display_name="model"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, model, lcs_data, contrast, brightness, saturation,
+                start_step, end_step, mask=None) -> io.NodeOutput:
+        """Clone model, attach LCS contrast/brightness/saturation hook. Returns patched MODEL."""
+        m = model.clone()
+        hook = _build_contrast_fn(lcs_data, contrast, brightness, saturation,
+                                  start_step, end_step, mask)
+        m.set_model_sampler_post_cfg_function(hook)
+        return io.NodeOutput(m)

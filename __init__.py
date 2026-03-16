@@ -6,7 +6,7 @@ Paper: "The Latent Color Subspace" (arXiv:2603.12261v1, ICML 2026)
 # V3 ComfyExtension entry point
 from comfy_api.latest import ComfyExtension, io
 from .nodes.calibrate import LCSCalibrate, LCSLoadData
-from .nodes.intervene import LCSColorIntervene, LCSColorBatch
+from .nodes.intervene import LCSColorIntervene, LCSColorBatch, LCSContrastAdjust
 from .nodes.observe import LCSPreviewColors, LCSStepObserver
 
 
@@ -14,12 +14,13 @@ class LCSExtension(ComfyExtension):
     """V3 ComfyExtension providing all LCS nodes to ComfyUI."""
 
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
-        """Return all 6 LCS node classes."""
+        """Return all LCS node classes."""
         return [
             LCSCalibrate,
             LCSLoadData,
             LCSColorIntervene,
             LCSColorBatch,
+            LCSContrastAdjust,
             LCSPreviewColors,
             LCSStepObserver,
         ]
