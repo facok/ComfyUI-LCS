@@ -302,6 +302,8 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
     onto achromatic axis) and chroma (perpendicular residual). No HSL round-trip.
     """
     # Precompute warm/cool direction vector (depends only on immutable calibration data)
+    # Scaled so that color_temperature=1.0 shifts by the mean anchor chroma magnitude,
+    # giving a visually significant warm↔cool shift.
     _warm_dir = None
     if abs(color_temperature) > _EPS:
         anc = lcs_data.anchor_lcs  # [8, 3]
@@ -314,10 +316,15 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
             l_a = ((pt - black_anc) * a_pre).sum() / a_sq_pre
             return pt - (black_anc + l_a * a_pre)
 
-        warm_center = (_anchor_chroma_pre(0) + _anchor_chroma_pre(5)) / 2  # Red + Yellow
-        cool_center = (_anchor_chroma_pre(1) + _anchor_chroma_pre(4)) / 2  # Blue + Cyan
+        chromas = [_anchor_chroma_pre(i) for i in range(6)]
+        warm_center = (chromas[0] + chromas[5]) / 2  # Red + Yellow
+        cool_center = (chromas[1] + chromas[4]) / 2  # Blue + Cyan
         wd = warm_center - cool_center
-        _warm_dir = wd / wd.norm()  # unit vector
+        wd_unit = wd / wd.norm()  # unit vector
+
+        # Scale: color_temperature=1.0 → shift by mean chroma norm
+        mean_chroma_norm = sum(c.norm() for c in chromas) / 6.0
+        _warm_dir = wd_unit * mean_chroma_norm
 
     def post_cfg_fn(args):
         """Post-CFG hook: project to LCS, adjust contrast/brightness/saturation, reconstruct."""
@@ -478,7 +485,7 @@ class LCSToneAdjust(io.ComfyNode):
                                tooltip="Lightness shift (>0 = brighter, <0 = darker)"),
                 io.Float.Input("saturation", default=1.0, min=0.0, max=3.0, step=0.05,
                                tooltip="Saturation multiplier (>1 = more vivid, <1 = more muted, 0 = grayscale)"),
-                io.Float.Input("color_temperature", default=0.0, min=-2.0, max=2.0, step=0.05,
+                io.Float.Input("color_temperature", default=0.0, min=-1.0, max=1.0, step=0.05,
                                tooltip="Color temperature shift (>0 = warmer/amber, <0 = cooler/blue)"),
                 io.Int.Input("start_step", default=5, min=0, max=50,
                              tooltip="First step to apply adjustment"),
