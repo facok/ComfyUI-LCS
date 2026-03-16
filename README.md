@@ -2,6 +2,8 @@
 
 Training-free color control via the **Latent Color Subspace**.
 
+> **Note:** This is an unofficial community implementation. For the official code, see [ExplainableML/LCS](https://github.com/ExplainableML/LCS).
+
 Based on the paper ["The Latent Color Subspace"](https://arxiv.org/abs/2603.12261v1) (ICML 2026), which discovers that color in diffusion model latent patch spaces lives in a **3D subspace** (found via PCA with 100% color variance). The remaining 61 dimensions encode structure and detail, orthogonal to color.
 
 This plugin manipulates colors directly in the 3D LCS during diffusion sampling — no model training, no LoRA, no post-processing.
@@ -185,15 +187,20 @@ ComfyUI-LCS/
 
 ## Citation
 
+Official repository: [ExplainableML/LCS](https://github.com/ExplainableML/LCS)
+
 ```bibtex
-@inproceedings{lcs2026,
-  title={The Latent Color Subspace},
-  author={...},
-  booktitle={ICML},
-  year={2026},
-  note={arXiv:2603.12261v1}
+@article{pach2026latentcolorsubspace,
+  title={The Latent Color Subspace: Emergent Order in High-Dimensional Chaos},
+  author={Mateusz Pach and Jessica Bader and Quentin Bouniot and Serge Belongie and Zeynep Akata},
+  journal={arxiv},
+  year={2026}
 }
 ```
+
+## Acknowledgments
+
+Thanks to the authors of [The Latent Color Subspace](https://github.com/ExplainableML/LCS) — Mateusz Pach, Jessica Bader, Quentin Bouniot, Serge Belongie, and Zeynep Akata — for their research making training-free color control possible.
 
 ## License
 

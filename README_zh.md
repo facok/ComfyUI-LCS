@@ -2,6 +2,8 @@
 
 基于**潜在颜色子空间**（Latent Color Subspace）的无训练颜色控制。
 
+> **注意：** 本项目为非官方社区实现。官方代码见 [ExplainableML/LCS](https://github.com/ExplainableML/LCS)。
+
 基于论文 ["The Latent Color Subspace"](https://arxiv.org/abs/2603.12261v1)（ICML 2026）。论文发现扩散模型潜在 patch 空间中的颜色信息完全存在于一个 **3 维子空间**（PCA 捕获 100% 颜色方差），剩余 61 维编码结构和细节，与颜色正交。
 
 本插件在扩散采样过程中直接操作 3D LCS 来控制颜色 —— 无需训练、无需 LoRA、无需后处理。
@@ -184,15 +186,20 @@ ComfyUI-LCS/
 
 ## 引用
 
+官方仓库：[ExplainableML/LCS](https://github.com/ExplainableML/LCS)
+
 ```bibtex
-@inproceedings{lcs2026,
-  title={The Latent Color Subspace},
-  author={...},
-  booktitle={ICML},
-  year={2026},
-  note={arXiv:2603.12261v1}
+@article{pach2026latentcolorsubspace,
+  title={The Latent Color Subspace: Emergent Order in High-Dimensional Chaos},
+  author={Mateusz Pach and Jessica Bader and Quentin Bouniot and Serge Belongie and Zeynep Akata},
+  journal={arxiv},
+  year={2026}
 }
 ```
+
+## 致谢
+
+感谢 [The Latent Color Subspace](https://github.com/ExplainableML/LCS) 的作者 Mateusz Pach、Jessica Bader、Quentin Bouniot、Serge Belongie 和 Zeynep Akata，他们的研究使无训练颜色控制成为可能。
 
 ## 许可证
 
