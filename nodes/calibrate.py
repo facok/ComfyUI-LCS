@@ -51,10 +51,10 @@ class LCSCalibrate(io.ComfyNode):
         os.makedirs(DATA_DIR, exist_ok=True)
         save_path = os.path.join(DATA_DIR, "lcs_calibration.safetensors")
         save_file({
-            "basis": lcs_data.basis,
-            "mean": lcs_data.mean,
-            "anchor_lcs": lcs_data.anchor_lcs,
-            "anchor_angles": lcs_data.anchor_angles,
+            "basis": lcs_data.basis.contiguous(),
+            "mean": lcs_data.mean.contiguous(),
+            "anchor_lcs": lcs_data.anchor_lcs.contiguous(),
+            "anchor_angles": lcs_data.anchor_angles.contiguous(),
         }, save_path)
 
         return io.NodeOutput(lcs_data)
@@ -134,10 +134,10 @@ class LCSLoadData(io.ComfyNode):
             os.makedirs(DATA_DIR, exist_ok=True)
             save_path = os.path.join(DATA_DIR, "lcs_calibration.safetensors")
             save_file({
-                "basis": lcs_data.basis,
-                "mean": lcs_data.mean,
-                "anchor_lcs": lcs_data.anchor_lcs,
-                "anchor_angles": lcs_data.anchor_angles,
+                "basis": lcs_data.basis.contiguous(),
+                "mean": lcs_data.mean.contiguous(),
+                "anchor_lcs": lcs_data.anchor_lcs.contiguous(),
+                "anchor_angles": lcs_data.anchor_angles.contiguous(),
             }, save_path)
 
         return io.NodeOutput(lcs_data)
