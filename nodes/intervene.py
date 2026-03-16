@@ -449,7 +449,9 @@ class LCSContrastAdjust(io.ComfyNode):
                 start_step, end_step, mask=None) -> io.NodeOutput:
         """Clone model, attach LCS contrast/brightness/saturation hook. Returns patched MODEL."""
         m = model.clone()
-        hook = _build_contrast_fn(lcs_data, contrast, brightness, saturation,
-                                  start_step, end_step, mask)
-        m.set_model_sampler_post_cfg_function(hook)
+        # Skip hook entirely when all parameters are at default (true no-op)
+        if contrast != 1.0 or brightness != 0.0 or saturation != 1.0:
+            hook = _build_contrast_fn(lcs_data, contrast, brightness, saturation,
+                                      start_step, end_step, mask)
+            m.set_model_sampler_post_cfg_function(hook)
         return io.NodeOutput(m)
