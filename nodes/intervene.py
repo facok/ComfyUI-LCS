@@ -360,9 +360,11 @@ def _build_contrast_fn(lcs_data, contrast, brightness, saturation, start_step, e
         chroma = c_norm - c_L
 
         # Adjust lightness: contrast around per-image mean + brightness shift
+        # No clamp: LCS coords are naturally unbounded during denoising (same as
+        # Type I intervention), and clamping destroys highlight/shadow detail that
+        # the user wants to enhance. The no-op skip in execute() handles defaults.
         l_mean = l_scalar.mean(dim=-1, keepdim=True)  # [B, 1]
         l_new = (l_scalar - l_mean) * contrast + l_mean + brightness
-        l_new = l_new.clamp(0, 1)
 
         # Adjust saturation
         chroma_new = chroma * saturation
