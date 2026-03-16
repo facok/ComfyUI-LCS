@@ -19,11 +19,11 @@ def vae_fingerprint(vae) -> str:
     for key in sorted(sd.keys()):
         if "decoder" in key and "weight" in key:
             w = sd[key]
-            return hashlib.sha256(w.cpu().numpy().tobytes()).hexdigest()[:8]
+            return hashlib.sha256(w.cpu().float().numpy().tobytes()).hexdigest()[:8]
     # Fallback: hash first weight found
     first_key = sorted(sd.keys())[0]
     w = sd[first_key]
-    return hashlib.sha256(w.cpu().numpy().tobytes()).hexdigest()[:8]
+    return hashlib.sha256(w.cpu().float().numpy().tobytes()).hexdigest()[:8]
 
 
 # 8 anchor colors: R, B, G, M, C, Y, Black, White
