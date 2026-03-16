@@ -34,9 +34,12 @@ async def comfy_entrypoint() -> LCSExtension:
 # V2 backward compatibility
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
+WEB_DIRECTORY = "./web"
+
 __all__ = [
     "NODE_CLASS_MAPPINGS",
     "NODE_DISPLAY_NAME_MAPPINGS",
+    "WEB_DIRECTORY",
     "LCSExtension",
     "comfy_entrypoint",
 ]
