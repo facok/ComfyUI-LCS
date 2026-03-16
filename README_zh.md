@@ -1,10 +1,20 @@
 # ComfyUI-LCS
 
-基于**潜在颜色子空间**（Latent Color Subspace）的 FLUX 无训练颜色控制。
+基于**潜在颜色子空间**（Latent Color Subspace）的无训练颜色控制。
 
-基于论文 ["The Latent Color Subspace"](https://arxiv.org/abs/2603.12261v1)（ICML 2026）。论文发现 FLUX 64 维潜在 patch 空间中的颜色信息完全存在于一个 **3 维子空间**（PCA 捕获 100% 颜色方差），剩余 61 维编码结构和细节，与颜色正交。
+基于论文 ["The Latent Color Subspace"](https://arxiv.org/abs/2603.12261v1)（ICML 2026）。论文发现扩散模型潜在 patch 空间中的颜色信息完全存在于一个 **3 维子空间**（PCA 捕获 100% 颜色方差），剩余 61 维编码结构和细节，与颜色正交。
 
 本插件在扩散采样过程中直接操作 3D LCS 来控制颜色 —— 无需训练、无需 LoRA、无需后处理。
+
+### 已测试模型
+
+| 模型 | 状态 |
+|------|------|
+| FLUX | 已测试 |
+| z-image | 已测试 |
+| z-image-turbo | 已测试 |
+
+LCS 按 VAE 校准，因此理论上适用于任何使用兼容 VAE 架构的模型。如果你在其他模型上测试通过，欢迎反馈。
 
 > [English README](README.md)
 
@@ -38,10 +48,9 @@ pip install einops safetensors
 
 | 节点 | 说明 |
 |------|------|
-| **LCS Calibrate** | 通过 PCA 从 FLUX VAE 计算 LCS 基底和锚点颜色。自动保存至 `data/lcs_calibration.safetensors`。 |
-| **LCS Load Data** | 加载已缓存的校准数据，或在提供 VAE 时自动校准。 |
+| **LCS Load Data** | 自动校准并按 VAE 缓存 LCS 数据。通过 VAE 权重指纹自动管理缓存 —— 只需连接 VAE 即可。 |
 
-只需校准一次，结果会缓存并在后续会话中复用。
+每个 VAE 只需校准一次，结果自动缓存。后续运行直接从缓存加载。
 
 ### 干预
 
@@ -85,7 +94,7 @@ LCS Load Data → LCS Color Intervene → KSampler
                   （选择颜色）
 ```
 
-1. 添加 **LCS Load Data** — 连接 FLUX VAE（首次运行会自动校准）
+1. 添加 **LCS Load Data** — 连接 VAE（首次运行会自动校准）
 2. 添加 **LCS Color Intervene** — 连接 MODEL 和 LCS_DATA
 3. 选择目标颜色，设置强度（默认 1.0）
 4. 将输出 MODEL 连接到 KSampler
@@ -150,7 +159,7 @@ ComfyUI-LCS/
 │   ├── patchify.py       # Patch ↔ 潜在空间转换
 │   └── timestep.py       # Sigma/时间步工具
 ├── nodes/
-│   ├── calibrate.py      # LCSCalibrate, LCSLoadData
+│   ├── calibrate.py      # LCSLoadData（自动校准 + 缓存）
 │   ├── intervene.py      # LCSColorIntervene, LCSColorBatch, LCSToneAdjust
 │   └── observe.py        # LCSPreviewColors, LCSStepObserver
 ├── data/                 # 缓存的校准文件

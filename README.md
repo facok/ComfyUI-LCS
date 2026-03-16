@@ -1,10 +1,20 @@
 # ComfyUI-LCS
 
-Training-free color control for FLUX via the **Latent Color Subspace**.
+Training-free color control via the **Latent Color Subspace**.
 
-Based on the paper ["The Latent Color Subspace"](https://arxiv.org/abs/2603.12261v1) (ICML 2026), which discovers that color in FLUX's 64-dimensional latent patch space lives in a **3D subspace** (found via PCA with 100% color variance). The remaining 61 dimensions encode structure and detail, orthogonal to color.
+Based on the paper ["The Latent Color Subspace"](https://arxiv.org/abs/2603.12261v1) (ICML 2026), which discovers that color in diffusion model latent patch spaces lives in a **3D subspace** (found via PCA with 100% color variance). The remaining 61 dimensions encode structure and detail, orthogonal to color.
 
 This plugin manipulates colors directly in the 3D LCS during diffusion sampling — no model training, no LoRA, no post-processing.
+
+### Tested Models
+
+| Model | Status |
+|-------|--------|
+| FLUX | Tested |
+| z-image | Tested |
+| z-image-turbo | Tested |
+
+The LCS is calibrated per-VAE, so it should work with any model that uses a compatible VAE architecture. If you test with other models, feel free to report your results.
 
 > [中文版 README](README_zh.md)
 
@@ -38,10 +48,9 @@ pip install einops safetensors
 
 | Node | Description |
 |------|-------------|
-| **LCS Calibrate** | Compute LCS basis and anchors from a FLUX VAE via PCA on solid-color images. Auto-saves to `data/lcs_calibration.safetensors`. |
-| **LCS Load Data** | Load cached calibration data, or auto-calibrate if a VAE is provided. |
+| **LCS Load Data** | Auto-calibrate and cache LCS data per-VAE. Fingerprints VAE weights for automatic cache management — just connect your VAE. |
 
-Run calibration once — the result is cached and reused across sessions.
+Calibration runs once per VAE and is cached automatically. Subsequent runs load instantly from cache.
 
 ### Intervention
 
@@ -85,7 +94,7 @@ LCS Load Data → LCS Color Intervene → KSampler
                   (pick a color)
 ```
 
-1. Add **LCS Load Data** — connect your FLUX VAE (first run only, calibrates automatically)
+1. Add **LCS Load Data** — connect your VAE (first run only, calibrates automatically)
 2. Add **LCS Color Intervene** — connect MODEL and LCS_DATA
 3. Pick a target color, set strength (default 1.0)
 4. Connect the output MODEL to your KSampler
@@ -151,7 +160,7 @@ ComfyUI-LCS/
 │   ├── patchify.py       # Patch ↔ latent conversion
 │   └── timestep.py       # Sigma/timestep utilities
 ├── nodes/
-│   ├── calibrate.py      # LCSCalibrate, LCSLoadData
+│   ├── calibrate.py      # LCSLoadData (auto-calibrate + cache)
 │   ├── intervene.py      # LCSColorIntervene, LCSColorBatch, LCSToneAdjust
 │   └── observe.py        # LCSPreviewColors, LCSStepObserver
 ├── data/                 # Cached calibration files

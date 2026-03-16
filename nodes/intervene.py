@@ -205,7 +205,7 @@ class LCSColorIntervene(io.ComfyNode):
             description="Steer colors during FLUX generation via Latent Color Subspace",
             inputs=[
                 io.Model.Input("model"),
-                LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSCalibrate or LCSLoadData"),
+                LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSLoadData"),
                 io.Color.Input("color", default="#FF0000", tooltip="Target color"),
                 io.Float.Input("strength", default=1.0, min=0.0, max=2.0, step=0.05,
                                tooltip="Intervention strength (1.0 = full, 0.0 = none)"),
@@ -253,7 +253,7 @@ class LCSColorBatch(io.ComfyNode):
             description="Apply different target colors to each batch item for multi-color generation",
             inputs=[
                 io.Model.Input("model"),
-                LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSCalibrate or LCSLoadData"),
+                LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSLoadData"),
                 io.String.Input("colors", default="#FF0000,#00FF00,#0000FF",
                                 tooltip="Comma-separated hex colors, one per batch item"),
                 io.Float.Input("strength", default=1.0, min=0.0, max=2.0, step=0.05),
@@ -486,7 +486,7 @@ class LCSToneAdjust(io.ComfyNode):
             description="Adjust tone (contrast, brightness, saturation, color temperature) via Latent Color Subspace",
             inputs=[
                 io.Model.Input("model"),
-                LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSCalibrate or LCSLoadData"),
+                LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSLoadData"),
                 io.Combo.Input("preset", options=list(TONE_PRESETS.keys()), default="Custom",
                                tooltip="Select a tonal preset or Custom to use the sliders below"),
                 io.Float.Input("contrast", default=1.0, min=0.0, max=3.0, step=0.05,

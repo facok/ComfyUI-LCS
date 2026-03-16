@@ -1,10 +1,29 @@
 """PCA calibration from FLUX VAE: compute LCS basis, mean, and anchor positions."""
 
+import hashlib
 import math
 import torch
 import comfy.utils
 from .patchify import patchify
 from .lcs_data import LCSData
+
+
+def vae_fingerprint(vae) -> str:
+    """8-char hex fingerprint from VAE decoder weights.
+
+    Used to cache calibration data per-VAE so different VAE models
+    get separate calibration files automatically.
+    """
+    sd = vae.get_sd()
+    # Use first decoder weight tensor as fingerprint source
+    for key in sorted(sd.keys()):
+        if "decoder" in key and "weight" in key:
+            w = sd[key]
+            return hashlib.sha256(w.cpu().numpy().tobytes()).hexdigest()[:8]
+    # Fallback: hash first weight found
+    first_key = sorted(sd.keys())[0]
+    w = sd[first_key]
+    return hashlib.sha256(w.cpu().numpy().tobytes()).hexdigest()[:8]
 
 
 # 8 anchor colors: R, B, G, M, C, Y, Black, White
