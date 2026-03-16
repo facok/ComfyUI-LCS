@@ -285,6 +285,15 @@ class LCSColorBatch(io.ComfyNode):
         return io.NodeOutput(m, batch_size)
 
 
+_EPS = 1e-6
+
+
+def _is_default_tone(contrast, brightness, saturation, color_temperature):
+    """Check if all tone parameters are at their default (no-op) values."""
+    return (abs(contrast - 1.0) < _EPS and abs(brightness) < _EPS
+            and abs(saturation - 1.0) < _EPS and abs(color_temperature) < _EPS)
+
+
 def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature,
                    start_step, end_step, mask):
     """Build the post_cfg_function closure for tone adjustment (contrast/brightness/saturation/temperature).
@@ -292,6 +301,24 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
     Operates directly in 3D LCS space by decomposing into lightness (projection
     onto achromatic axis) and chroma (perpendicular residual). No HSL round-trip.
     """
+    # Precompute warm/cool direction vector (depends only on immutable calibration data)
+    _warm_dir = None
+    if abs(color_temperature) > _EPS:
+        anc = lcs_data.anchor_lcs  # [8, 3]
+        black_anc, white_anc = anc[6], anc[7]
+        a_pre = white_anc - black_anc
+        a_sq_pre = (a_pre * a_pre).sum()
+
+        def _anchor_chroma_pre(idx):
+            pt = anc[idx]
+            l_a = ((pt - black_anc) * a_pre).sum() / a_sq_pre
+            return pt - (black_anc + l_a * a_pre)
+
+        warm_center = (_anchor_chroma_pre(0) + _anchor_chroma_pre(5)) / 2  # Red + Yellow
+        cool_center = (_anchor_chroma_pre(1) + _anchor_chroma_pre(4)) / 2  # Blue + Cyan
+        wd = warm_center - cool_center
+        _warm_dir = wd / wd.norm()  # unit vector
+
     def post_cfg_fn(args):
         """Post-CFG hook: project to LCS, adjust contrast/brightness/saturation, reconstruct."""
         denoised = args["denoised"]  # [B, 16, H, W] in process_in space
@@ -367,20 +394,9 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
         l_mean = l_scalar.mean(dim=-1, keepdim=True)  # [B, 1]
         l_new = (l_scalar - l_mean) * contrast + l_mean + brightness
 
-        # Adjust color temperature: shift chroma along warm↔cool axis
-        if color_temperature != 0.0:
-            # Compute chromatic projections of the 6 hue anchors (indices 0-5)
-            # Red=0, Blue=1, Green=2, Magenta=3, Cyan=4, Yellow=5
-            def _anchor_chroma(idx):
-                anc = anchor_lcs[idx]  # [3]
-                l_a = ((anc - black) * a).sum() / a_sq
-                return anc - (black + l_a * a)
-
-            warm_center = (_anchor_chroma(0) + _anchor_chroma(5)) / 2  # Red + Yellow
-            cool_center = (_anchor_chroma(1) + _anchor_chroma(4)) / 2  # Blue + Cyan
-            warm_dir = warm_center - cool_center
-            warm_dir = warm_dir / warm_dir.norm()  # unit vector
-            chroma = chroma + color_temperature * warm_dir
+        # Adjust color temperature: shift chroma along warm↔cool axis (precomputed)
+        if _warm_dir is not None:
+            chroma = chroma + color_temperature * _warm_dir.to(device=device, dtype=dtype)
 
         # Adjust saturation
         chroma_new = chroma * saturation
@@ -501,7 +517,7 @@ class LCSToneAdjust(io.ComfyNode):
 
         m = model.clone()
         # Skip hook entirely when all parameters are at default (true no-op)
-        if contrast != 1.0 or brightness != 0.0 or saturation != 1.0 or color_temperature != 0.0:
+        if not _is_default_tone(contrast, brightness, saturation, color_temperature):
             hook = _build_tone_fn(lcs_data, contrast, brightness, saturation,
                                   color_temperature, start_step, end_step, mask)
             m.set_model_sampler_post_cfg_function(hook)
