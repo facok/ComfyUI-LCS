@@ -1,0 +1,265 @@
+"""Intervention nodes: LCSColorIntervene and LCSColorBatch."""
+
+import torch
+import torch.nn.functional as F
+from comfy_api.latest import io
+
+from ..core.lcs_data import LCSData
+from ..core.patchify import patchify, unpatchify
+from ..core.timestep import get_alpha_beta, get_alpha_beta_t50, normalize_to_t50, denormalize_from_t50
+from ..core.color_space import hex_to_hsl, encode_hsl_to_lcs, decode_lcs_to_hsl
+
+LCS_DATA = io.Custom("LCS_DATA")
+
+# FLUX VAE constants
+SCALE_FACTOR = 0.3611
+SHIFT_FACTOR = 0.1159
+
+
+def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, end_step, mask):
+    """Build the post_cfg_function closure for color intervention.
+
+    target_colors_hsl: list of (h, s, l) tuples, one per batch item (or one for all).
+    """
+    def post_cfg_fn(args):
+        denoised = args["denoised"]  # [B, 16, H, W] in process_in space
+        sigma = args["sigma"]
+
+        # Determine current step
+        sigma_val = float(sigma.flatten()[0])
+
+        # Get step index from sample_sigmas
+        sigmas = args["model_options"]["transformer_options"]["sample_sigmas"]
+        step_index = None
+        matched = (sigmas == sigma_val).nonzero()
+        if len(matched) > 0:
+            step_index = matched[0].item()
+        else:
+            for i in range(len(sigmas) - 1):
+                if (sigmas[i] - sigma_val) * (sigmas[i + 1] - sigma_val) <= 0:
+                    step_index = i
+                    break
+        if step_index is None:
+            return denoised
+
+        # Check if in intervention range
+        if step_index < start_step or step_index > end_step:
+            return denoised
+
+        device = denoised.device
+        dtype = denoised.dtype
+
+        # Move LCS data to device
+        ld = lcs_data.to(device, dtype)
+        B_mat = ld.basis        # [64, 3]
+        mu = ld.mean            # [64]
+        anchor_lcs = ld.anchor_lcs    # [8, 3]
+        anchor_angles = ld.anchor_angles  # [6]
+
+        # Convert from process_in to raw VAE space
+        raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
+
+        # Patchify
+        patches, h_len, w_len = patchify(raw)  # [B, L, 64]
+
+        # Project to LCS
+        projection = (patches - mu) @ B_mat  # [B, L, 3]
+
+        # Compute residual (61D orthogonal complement)
+        reconstruction = projection @ B_mat.T + mu  # [B, L, 64]
+        residual = patches - reconstruction  # [B, L, 64]
+
+        # Get timestep statistics
+        alpha_t, beta_t = get_alpha_beta(sigma_val, device=device)
+        alpha_t, beta_t = alpha_t.to(dtype), beta_t.to(dtype)
+        alpha_50, beta_50 = get_alpha_beta_t50(device=device)
+        alpha_50, beta_50 = alpha_50.to(dtype), beta_50.to(dtype)
+
+        # Normalize to t=50
+        c_norm = normalize_to_t50(projection, alpha_t, beta_t, alpha_50, beta_50)  # [B, L, 3]
+
+        # Apply intervention per batch item
+        B_size = c_norm.shape[0]
+        new_c_norm = c_norm.clone()
+
+        for b in range(B_size):
+            color_idx = b if b < len(target_colors_hsl) else 0
+            t_h, t_s, t_l = target_colors_hsl[color_idx]
+
+            # Encode target color to LCS at t=50
+            t_h_t = torch.tensor(t_h, device=device, dtype=dtype)
+            t_s_t = torch.tensor(t_s, device=device, dtype=dtype)
+            t_l_t = torch.tensor(t_l, device=device, dtype=dtype)
+            target_lcs = encode_hsl_to_lcs(t_h_t, t_s_t, t_l_t, anchor_lcs, anchor_angles)  # [3]
+
+            c_b = c_norm[b]  # [L, 3]
+
+            if mode == "type_i":
+                # Type I: direct LCS translation
+                shift = target_lcs - c_b.mean(dim=0)
+                new_c_norm[b] = c_b + strength * shift
+
+            elif mode == "type_ii":
+                # Type II: decode → shift in HSL → re-encode
+                h_cur, s_cur, l_cur = decode_lcs_to_hsl(c_b, anchor_lcs, anchor_angles)
+                # Shift towards target HSL
+                h_new = t_h_t.expand_as(h_cur)
+                s_new = t_s_t.expand_as(s_cur)
+                l_new = t_l_t.expand_as(l_cur)
+                # Interpolate in HSL
+                h_interp = _hue_lerp(h_cur, h_new, strength)
+                s_interp = s_cur + strength * (s_new - s_cur)
+                l_interp = l_cur + strength * (l_new - l_cur)
+                new_c_norm[b] = encode_hsl_to_lcs(h_interp, s_interp.clamp(0, 1),
+                                                   l_interp.clamp(0, 1),
+                                                   anchor_lcs, anchor_angles)
+
+            else:  # interpolated (default)
+                # gamma_t = sigma (high sigma → Type I, low sigma → Type II)
+                gamma = sigma_val
+
+                # Type I
+                shift = target_lcs - c_b.mean(dim=0)
+                c_type_i = c_b + strength * shift
+
+                # Type II
+                h_cur, s_cur, l_cur = decode_lcs_to_hsl(c_b, anchor_lcs, anchor_angles)
+                h_new = t_h_t.expand_as(h_cur)
+                s_new = t_s_t.expand_as(s_cur)
+                l_new = t_l_t.expand_as(l_cur)
+                h_interp = _hue_lerp(h_cur, h_new, strength)
+                s_interp = s_cur + strength * (s_new - s_cur)
+                l_interp = l_cur + strength * (l_new - l_cur)
+                c_type_ii = encode_hsl_to_lcs(h_interp, s_interp.clamp(0, 1),
+                                               l_interp.clamp(0, 1),
+                                               anchor_lcs, anchor_angles)
+
+                # Interpolate: gamma * Type_I + (1-gamma) * Type_II
+                new_c_norm[b] = gamma * c_type_i + (1.0 - gamma) * c_type_ii
+
+        # Apply mask if provided
+        if mask is not None:
+            mask_dev = mask.to(device=device, dtype=dtype)
+            if mask_dev.ndim == 3:
+                mask_dev = mask_dev[:1]  # Use first mask for all batch items
+            # Downsample mask to patch grid: → [B, 1, h_len, w_len]
+            if mask_dev.ndim == 2:
+                mask_4d = mask_dev.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+            elif mask_dev.ndim == 3:
+                mask_4d = mask_dev.unsqueeze(1)  # [B, 1, H, W]
+            else:
+                mask_4d = mask_dev  # assume already 4D
+            mask_resized = F.interpolate(
+                mask_4d, size=(h_len, w_len), mode="bilinear", align_corners=False
+            )
+            # Flatten to [1, L, 1]
+            mask_flat = mask_resized.reshape(1, -1, 1)
+            if mask_flat.shape[1] != new_c_norm.shape[1]:
+                mask_flat = mask_flat[:, :new_c_norm.shape[1], :]
+            # Blend: masked areas get intervention, unmasked keep original
+            new_c_norm = c_norm + mask_flat * (new_c_norm - c_norm)
+
+        # Denormalize back to timestep t
+        new_projection = denormalize_from_t50(new_c_norm, alpha_t, beta_t, alpha_50, beta_50)
+
+        # Reconstruct patches
+        patches_new = new_projection @ B_mat.T + mu + residual  # [B, L, 64]
+
+        # Unpatchify
+        raw_new = unpatchify(patches_new, h_len, w_len)  # [B, 16, H, W]
+
+        # Convert back to process_in space
+        modified = (raw_new - SHIFT_FACTOR) * SCALE_FACTOR
+
+        return modified.to(dtype)
+
+    return post_cfg_fn
+
+
+def _hue_lerp(h1, h2, t):
+    """Lerp hues on the circle [0,1], taking the shortest path."""
+    diff = h2 - h1
+    # Wrap to [-0.5, 0.5]
+    diff = diff - (diff > 0.5).float() + (diff < -0.5).float()
+    result = h1 + t * diff
+    return result % 1.0
+
+
+class LCSColorIntervene(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="LCSColorIntervene",
+            display_name="LCS Color Intervene",
+            category="LCS/intervention",
+            description="Steer colors during FLUX generation via Latent Color Subspace",
+            inputs=[
+                io.Model.Input("model"),
+                LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSCalibrate or LCSLoadData"),
+                io.Color.Input("color", default="#FF0000", tooltip="Target color"),
+                io.Float.Input("strength", default=1.0, min=0.0, max=2.0, step=0.05,
+                               tooltip="Intervention strength (1.0 = full, 0.0 = none)"),
+                io.Combo.Input("mode", options=["interpolated", "type_i", "type_ii"],
+                               default="interpolated",
+                               tooltip="Interpolated blends Type I (LCS shift) and Type II (HSL shift)"),
+                io.Int.Input("start_step", default=8, min=0, max=50,
+                             tooltip="First step to apply intervention (paper optimal: 8)"),
+                io.Int.Input("end_step", default=10, min=0, max=50,
+                             tooltip="Last step to apply intervention (paper optimal: 10)"),
+                io.Mask.Input("mask", optional=True,
+                              tooltip="Optional mask for localized color control"),
+            ],
+            outputs=[
+                io.Model.Output(display_name="model"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, model, lcs_data, color, strength, mode, start_step, end_step,
+                mask=None) -> io.NodeOutput:
+        m = model.clone()
+        h, s, l = hex_to_hsl(color)
+        hook = _build_post_cfg_fn(lcs_data, [(h, s, l)], strength, mode, start_step, end_step, mask)
+        m.set_model_sampler_post_cfg_function(hook)
+        return io.NodeOutput(m)
+
+
+class LCSColorBatch(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="LCSColorBatch",
+            display_name="LCS Color Batch",
+            category="LCS/intervention",
+            description="Apply different target colors to each batch item for multi-color generation",
+            inputs=[
+                io.Model.Input("model"),
+                LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSCalibrate or LCSLoadData"),
+                io.String.Input("colors", default="#FF0000,#00FF00,#0000FF",
+                                tooltip="Comma-separated hex colors, one per batch item"),
+                io.Float.Input("strength", default=1.0, min=0.0, max=2.0, step=0.05),
+                io.Combo.Input("mode", options=["interpolated", "type_i", "type_ii"],
+                               default="interpolated"),
+                io.Int.Input("start_step", default=8, min=0, max=50),
+                io.Int.Input("end_step", default=10, min=0, max=50),
+                io.Mask.Input("mask", optional=True),
+            ],
+            outputs=[
+                io.Model.Output(display_name="model"),
+                io.Int.Output(display_name="batch_size"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, model, lcs_data, colors, strength, mode, start_step, end_step,
+                mask=None) -> io.NodeOutput:
+        m = model.clone()
+
+        # Parse comma-separated hex colors
+        color_list = [c.strip() for c in colors.split(",") if c.strip()]
+        target_hsl = [hex_to_hsl(c) for c in color_list]
+        batch_size = len(target_hsl)
+
+        hook = _build_post_cfg_fn(lcs_data, target_hsl, strength, mode, start_step, end_step, mask)
+        m.set_model_sampler_post_cfg_function(hook)
+        return io.NodeOutput(m, batch_size)
