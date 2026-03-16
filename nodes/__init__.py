@@ -1,7 +1,7 @@
 """V2 backward compatibility exports for all LCS nodes."""
 
 from .calibrate import LCSCalibrate, LCSLoadData
-from .intervene import LCSColorIntervene, LCSColorBatch, LCSContrastAdjust
+from .intervene import LCSColorIntervene, LCSColorBatch, LCSToneAdjust
 from .observe import LCSPreviewColors, LCSStepObserver
 
 NODE_CLASS_MAPPINGS = {
@@ -9,7 +9,7 @@ NODE_CLASS_MAPPINGS = {
     "LCSLoadData": LCSLoadData,
     "LCSColorIntervene": LCSColorIntervene,
     "LCSColorBatch": LCSColorBatch,
-    "LCSContrastAdjust": LCSContrastAdjust,
+    "LCSToneAdjust": LCSToneAdjust,
     "LCSPreviewColors": LCSPreviewColors,
     "LCSStepObserver": LCSStepObserver,
 }
@@ -19,7 +19,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "LCSLoadData": "LCS Load Data",
     "LCSColorIntervene": "LCS Color Intervene",
     "LCSColorBatch": "LCS Color Batch",
-    "LCSContrastAdjust": "LCS Contrast Adjust",
+    "LCSToneAdjust": "LCS Tone Adjust",
     "LCSPreviewColors": "LCS Preview Colors",
     "LCSStepObserver": "LCS Step Observer",
 }

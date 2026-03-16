@@ -1,4 +1,4 @@
-"""Intervention nodes: LCSColorIntervene, LCSColorBatch, and LCSContrastAdjust."""
+"""Intervention nodes: LCSColorIntervene, LCSColorBatch, and LCSToneAdjust."""
 
 import torch
 import torch.nn.functional as F
@@ -285,9 +285,9 @@ class LCSColorBatch(io.ComfyNode):
         return io.NodeOutput(m, batch_size)
 
 
-def _build_contrast_fn(lcs_data, contrast, brightness, saturation, color_temperature,
-                       start_step, end_step, mask):
-    """Build the post_cfg_function closure for contrast/brightness/saturation/temperature adjustment.
+def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature,
+                   start_step, end_step, mask):
+    """Build the post_cfg_function closure for tone adjustment (contrast/brightness/saturation/temperature).
 
     Operates directly in 3D LCS space by decomposing into lightness (projection
     onto achromatic axis) and chroma (perpendicular residual). No HSL round-trip.
@@ -424,35 +424,52 @@ def _build_contrast_fn(lcs_data, contrast, brightness, saturation, color_tempera
     return post_cfg_fn
 
 
-class LCSContrastAdjust(io.ComfyNode):
-    """Adjust contrast, brightness, saturation, and color temperature in the Latent Color Subspace.
+TONE_PRESETS = {
+    "Cinematic":    {"contrast": 1.20, "brightness": -0.05, "saturation": 0.90, "color_temperature": 0.15},
+    "HDR":          {"contrast": 1.40, "brightness":  0.0,  "saturation": 1.20, "color_temperature": 0.0},
+    "Vivid":        {"contrast": 1.10, "brightness":  0.0,  "saturation": 1.50, "color_temperature": 0.0},
+    "Dramatic":     {"contrast": 1.50, "brightness": -0.10, "saturation": 0.85, "color_temperature": 0.0},
+    "Low Key":      {"contrast": 1.30, "brightness": -0.20, "saturation": 0.80, "color_temperature": 0.0},
+    "High Key":     {"contrast": 0.80, "brightness":  0.20, "saturation": 0.90, "color_temperature": 0.0},
+    "Warm":         {"contrast": 1.0,  "brightness":  0.0,  "saturation": 1.0,  "color_temperature": 0.50},
+    "Cool":         {"contrast": 1.0,  "brightness":  0.0,  "saturation": 1.0,  "color_temperature": -0.50},
+    "Desaturated":  {"contrast": 1.0,  "brightness":  0.0,  "saturation": 0.40, "color_temperature": 0.0},
+    "Custom":       None,
+}
+
+
+class LCSToneAdjust(io.ComfyNode):
+    """Adjust tone (contrast, brightness, saturation, color temperature) in the Latent Color Subspace.
 
     Decomposes each patch into lightness (projection onto black→white axis)
     and chroma (perpendicular residual). Contrast scales lightness around its
     mean, brightness shifts it, saturation scales the chroma magnitude, and
     color temperature shifts chroma along the warm↔cool axis.
     All math is done directly in 3D LCS — no HSL round-trip needed.
+    Select a preset for one-click tonal styles, or use Custom to set sliders manually.
     """
 
     @classmethod
     def define_schema(cls) -> io.Schema:
-        """Define inputs and MODEL output for contrast/brightness/saturation/temperature adjustment."""
+        """Define inputs and MODEL output for tone adjustment."""
         return io.Schema(
-            node_id="LCSContrastAdjust",
-            display_name="LCS Contrast Adjust",
+            node_id="LCSToneAdjust",
+            display_name="LCS Tone Adjust",
             category="LCS/intervention",
-            description="Adjust contrast, brightness, saturation, and color temperature via Latent Color Subspace",
+            description="Adjust tone (contrast, brightness, saturation, color temperature) via Latent Color Subspace",
             inputs=[
                 io.Model.Input("model"),
                 LCS_DATA.Input("lcs_data", tooltip="Calibration data from LCSCalibrate or LCSLoadData"),
-                io.Float.Input("contrast", default=1.0, min=0.0, max=3.0, step=0.05,
-                               tooltip="Lightness contrast multiplier (>1 = more contrast, <1 = less, 1 = no change)"),
-                io.Float.Input("brightness", default=0.0, min=-1.0, max=1.0, step=0.05,
-                               tooltip="Lightness shift (>0 = brighter, <0 = darker)"),
-                io.Float.Input("saturation", default=1.0, min=0.0, max=3.0, step=0.05,
-                               tooltip="Saturation multiplier (>1 = more vivid, <1 = more muted, 0 = grayscale)"),
-                io.Float.Input("color_temperature", default=0.0, min=-2.0, max=2.0, step=0.05,
-                               tooltip="Color temperature shift (>0 = warmer/amber, <0 = cooler/blue)"),
+                io.Combo.Input("preset", options=list(TONE_PRESETS.keys()), default="Custom",
+                               tooltip="Select a tonal preset or Custom to use the sliders below"),
+                io.Float.Input("contrast", default=1.0, min=0.0, max=3.0, step=0.05, optional=True,
+                               tooltip="[Custom only] Lightness contrast multiplier (>1 = more contrast, <1 = less, 1 = no change)"),
+                io.Float.Input("brightness", default=0.0, min=-1.0, max=1.0, step=0.05, optional=True,
+                               tooltip="[Custom only] Lightness shift (>0 = brighter, <0 = darker)"),
+                io.Float.Input("saturation", default=1.0, min=0.0, max=3.0, step=0.05, optional=True,
+                               tooltip="[Custom only] Saturation multiplier (>1 = more vivid, <1 = more muted, 0 = grayscale)"),
+                io.Float.Input("color_temperature", default=0.0, min=-2.0, max=2.0, step=0.05, optional=True,
+                               tooltip="[Custom only] Color temperature shift (>0 = warmer/amber, <0 = cooler/blue)"),
                 io.Int.Input("start_step", default=5, min=0, max=50,
                              tooltip="First step to apply adjustment"),
                 io.Int.Input("end_step", default=15, min=0, max=50,
@@ -466,13 +483,26 @@ class LCSContrastAdjust(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, model, lcs_data, contrast, brightness, saturation, color_temperature,
-                start_step, end_step, mask=None) -> io.NodeOutput:
-        """Clone model, attach LCS contrast/brightness/saturation/temperature hook. Returns patched MODEL."""
+    def execute(cls, model, lcs_data, preset, start_step, end_step,
+                contrast=None, brightness=None, saturation=None, color_temperature=None,
+                mask=None) -> io.NodeOutput:
+        """Clone model, attach LCS tone adjustment hook. Returns patched MODEL."""
+        if preset != "Custom":
+            p = TONE_PRESETS[preset]
+            contrast = p["contrast"]
+            brightness = p["brightness"]
+            saturation = p["saturation"]
+            color_temperature = p["color_temperature"]
+        else:
+            contrast = contrast if contrast is not None else 1.0
+            brightness = brightness if brightness is not None else 0.0
+            saturation = saturation if saturation is not None else 1.0
+            color_temperature = color_temperature if color_temperature is not None else 0.0
+
         m = model.clone()
         # Skip hook entirely when all parameters are at default (true no-op)
         if contrast != 1.0 or brightness != 0.0 or saturation != 1.0 or color_temperature != 0.0:
-            hook = _build_contrast_fn(lcs_data, contrast, brightness, saturation,
-                                      color_temperature, start_step, end_step, mask)
+            hook = _build_tone_fn(lcs_data, contrast, brightness, saturation,
+                                  color_temperature, start_step, end_step, mask)
             m.set_model_sampler_post_cfg_function(hook)
         return io.NodeOutput(m)

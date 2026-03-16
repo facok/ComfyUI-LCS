@@ -6,7 +6,7 @@ Paper: "The Latent Color Subspace" (arXiv:2603.12261v1, ICML 2026)
 # V3 ComfyExtension entry point
 from comfy_api.latest import ComfyExtension, io
 from .nodes.calibrate import LCSCalibrate, LCSLoadData
-from .nodes.intervene import LCSColorIntervene, LCSColorBatch, LCSContrastAdjust
+from .nodes.intervene import LCSColorIntervene, LCSColorBatch, LCSToneAdjust
 from .nodes.observe import LCSPreviewColors, LCSStepObserver
 
 
@@ -20,7 +20,7 @@ class LCSExtension(ComfyExtension):
             LCSLoadData,
             LCSColorIntervene,
             LCSColorBatch,
-            LCSContrastAdjust,
+            LCSToneAdjust,
             LCSPreviewColors,
             LCSStepObserver,
         ]
