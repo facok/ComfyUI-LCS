@@ -6,6 +6,7 @@ import torch
 import comfy.utils
 from .patchify import patchify
 from .lcs_data import LCSData
+from .color_space import _chromatic_plane_basis
 
 
 def vae_fingerprint(vae) -> str:
@@ -142,17 +143,7 @@ def _compute_anchor_angles(anchor_lcs, basis, mean):
 
     # Achromatic axis
     a = white - black
-    a_unit = a / (a.norm() + 1e-10)
-
-    # Build orthonormal basis in chromatic plane
-    arb = torch.zeros(3, dtype=a.dtype)
-    arb[0] = 1.0
-    if a_unit[0].abs() > 0.9:
-        arb[0] = 0.0
-        arb[1] = 1.0
-    e1 = arb - (arb * a_unit).sum() * a_unit
-    e1 = e1 / (e1.norm() + 1e-10)
-    e2 = torch.linalg.cross(a_unit, e1)
+    a_unit, e1, e2 = _chromatic_plane_basis(a)
 
     # Project each chromatic anchor onto the plane and compute angle
     angles = []

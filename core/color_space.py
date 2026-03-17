@@ -7,6 +7,23 @@ Indices: 0=R, 1=B, 2=G, 3=M, 4=C, 5=Y, 6=Black, 7=White
 import math
 import torch
 
+# Standard HSL hue for each anchor: R=0, B=4/6, G=2/6, M=5/6, C=3/6, Y=1/6
+_ANCHOR_HUES = (0.0, 4.0/6.0, 2.0/6.0, 5.0/6.0, 3.0/6.0, 1.0/6.0)
+
+
+def _chromatic_plane_basis(a):
+    """Build orthonormal basis (a_unit, e1, e2) for the chromatic plane perpendicular to a."""
+    a_unit = a / (a.norm() + 1e-10)
+    arb = torch.zeros(3, device=a.device, dtype=a.dtype)
+    arb[0] = 1.0
+    if a_unit[0].abs() > 0.9:
+        arb[0] = 0.0
+        arb[1] = 1.0
+    e1 = arb - (arb * a_unit).sum() * a_unit
+    e1 = e1 / (e1.norm() + 1e-10)
+    e2 = torch.linalg.cross(a_unit, e1)
+    return a_unit, e1, e2
+
 
 def hex_to_hsl(hex_str):
     """Convert "#RRGGBB" to (h, s, l) where h∈[0,1], s∈[0,1], l∈[0,1]."""
@@ -126,17 +143,7 @@ def decode_lcs_to_hsl(c, anchor_lcs, anchor_angles):
     chroma_dist = chroma_vec.norm(dim=-1) + 1e-10  # [...]
 
     # Compute hue angle in chromatic plane
-    # Build 2 orthonormal basis vectors in the plane perpendicular to a
-    a_unit = a / a.norm()
-    # Pick an arbitrary vector not parallel to a
-    arb = torch.zeros(3, device=a.device, dtype=a.dtype)
-    arb[0] = 1.0
-    if (a_unit[0].abs() > 0.9):
-        arb[0] = 0.0
-        arb[1] = 1.0
-    e1 = arb - (arb * a_unit).sum() * a_unit
-    e1 = e1 / (e1.norm() + 1e-10)
-    e2 = torch.linalg.cross(a_unit, e1)
+    a_unit, e1, e2 = _chromatic_plane_basis(a)
 
     # Project chromatic vector to 2D
     x_coord = (chroma_vec * e1).sum(dim=-1)  # [...]
@@ -149,9 +156,7 @@ def decode_lcs_to_hsl(c, anchor_lcs, anchor_angles):
     # Standard HSL hue: R=0, Y=1/6, G=2/6, C=3/6, B=4/6, M=5/6
     # But anchors may not be in that order in angle-space, so we interpolate
     sorted_angles, sort_idx = anchor_angles.sort()
-    # Standard hue for each anchor: R=0/6, B=4/6, G=2/6, M=5/6, C=3/6, Y=1/6
-    anchor_hues = torch.tensor([0.0, 4.0/6.0, 2.0/6.0, 5.0/6.0, 3.0/6.0, 1.0/6.0],
-                               device=c.device, dtype=c.dtype)
+    anchor_hues = torch.tensor(_ANCHOR_HUES, device=c.device, dtype=c.dtype)
     sorted_hues = anchor_hues[sort_idx]
 
     # Piecewise linear interpolation around the circle
@@ -185,17 +190,7 @@ def encode_hsl_to_lcs(h, s, l, anchor_lcs, anchor_angles):
     chromatic = anchor_lcs[:6]  # [6, 3]
 
     a = white - black
-    a_unit = a / a.norm()
-
-    # Build chromatic plane basis
-    arb = torch.zeros(3, device=a.device, dtype=a.dtype)
-    arb[0] = 1.0
-    if (a_unit[0].abs() > 0.9):
-        arb[0] = 0.0
-        arb[1] = 1.0
-    e1 = arb - (arb * a_unit).sum() * a_unit
-    e1 = e1 / (e1.norm() + 1e-10)
-    e2 = torch.linalg.cross(a_unit, e1)
+    a_unit, e1, e2 = _chromatic_plane_basis(a)
 
     # Lightness point on achromatic axis
     c_L = black + l.unsqueeze(-1) * a  # [..., 3]
@@ -230,13 +225,13 @@ def _angle_to_hue(angle, sorted_angles, sorted_hues):
             continue
 
         # Check which angles fall in this segment
-        angle_shifted = angle.clone()
         if a_end > 2 * math.pi:
             # Wraparound segment
             mask = (angle >= a_start) | (angle < (a_end - 2 * math.pi))
             angle_shifted = torch.where(angle < a_start, angle + 2 * math.pi, angle)
         else:
             mask = (angle >= a_start) & (angle < a_end)
+            angle_shifted = angle
 
         frac = ((angle_shifted - a_start) / span).clamp(0, 1)
 
@@ -277,9 +272,7 @@ def _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black):
     anchor_chroma = chromatic - anchor_on_axis  # [6, 3] chroma vectors
     anchor_r = anchor_chroma.norm(dim=-1)  # [6] radii
 
-    # Standard hue for each anchor: R=0, B=4/6, G=2/6, M=5/6, C=3/6, Y=1/6
-    anchor_hues = torch.tensor([0.0, 4.0/6.0, 2.0/6.0, 5.0/6.0, 3.0/6.0, 1.0/6.0],
-                               device=chromatic.device, dtype=chromatic.dtype)
+    anchor_hues = torch.tensor(_ANCHOR_HUES, device=chromatic.device, dtype=chromatic.dtype)
 
     # Sort by ANGLE (same as _angle_to_hue) to match segment structure
     sorted_angles, sort_idx = anchor_angles.sort()
@@ -288,7 +281,7 @@ def _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black):
 
     # Iterate segments in angle order (same as _angle_to_hue)
     n = 6
-    result = torch.zeros(h.shape + (3,), device=chromatic.device, dtype=chromatic.dtype)
+    result = torch.empty(h.shape + (3,), device=chromatic.device, dtype=chromatic.dtype)
 
     for i in range(n):
         j = (i + 1) % n
