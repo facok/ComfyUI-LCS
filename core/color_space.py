@@ -162,10 +162,10 @@ def decode_lcs_to_hsl(c, anchor_lcs, anchor_angles):
     bicone_factor = 1.0 - (2.0 * l - 1.0).abs()  # [...]
     bicone_factor = bicone_factor.clamp(min=1e-10)
 
-    # Find the hue point on the anchor polygon
-    c_H = _hue_to_polygon_point(h, chromatic, anchor_angles, a_unit, e1, e2)  # [..., 3]
-    c_H_dist = (c_H - c_L).norm(dim=-1) + 1e-10
-    s = chroma_dist / (c_H_dist * bicone_factor)
+    # Find the chroma boundary at this hue (perpendicular to achromatic axis)
+    chroma_boundary = _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black)
+    max_radius = chroma_boundary.norm(dim=-1) + 1e-10
+    s = chroma_dist / (max_radius * bicone_factor)
     s = s.clamp(0.0, 1.0)
 
     return h, s, l
@@ -200,12 +200,12 @@ def encode_hsl_to_lcs(h, s, l, anchor_lcs, anchor_angles):
     # Lightness point on achromatic axis
     c_L = black + l.unsqueeze(-1) * a  # [..., 3]
 
-    # Hue point on chromatic polygon
-    c_H = _hue_to_polygon_point(h, chromatic, anchor_angles, a_unit, e1, e2)  # [..., 3]
+    # Chroma direction vector (perpendicular to achromatic axis)
+    chroma_dir = _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black)
 
-    # Combine: c = c_L + s * (1 - |2l-1|) * (c_H - c_L)
+    # Combine: c = c_L + s * (1 - |2l-1|) * chroma_dir
     bicone_factor = 1.0 - (2.0 * l - 1.0).abs()  # [...]
-    c = c_L + (s * bicone_factor).unsqueeze(-1) * (c_H - c_L)
+    c = c_L + (s * bicone_factor).unsqueeze(-1) * chroma_dir
 
     return c
 
@@ -255,44 +255,96 @@ def _angle_to_hue(angle, sorted_angles, sorted_hues):
     return h
 
 
-def _hue_to_polygon_point(h, chromatic, anchor_angles, a_unit, e1, e2):
-    """Map hue values [...] to points on the chromatic anchor polygon in 3D LCS space.
+def _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black):
+    """Map hue values [...] to chroma direction vectors perpendicular to the achromatic axis.
+
+    Returns vectors in 3D LCS space that lie in the chromatic plane (perpendicular to a_unit)
+    with magnitude equal to the polygon boundary radius at that hue.
+
+    Uses the same angle-sorted segment structure as _angle_to_hue to ensure
+    encode/decode round-trip consistency.
 
     chromatic: [6, 3] anchor LCS positions
+    anchor_angles: [6] calibrated angles of chromatic anchors (radians)
+    a_unit: [3] unit vector along achromatic axis
+    e1, e2: [3] orthonormal basis for chromatic plane
+    black: [3] black anchor position
     """
+    # Project each chromatic anchor onto the chromatic plane to get chroma radii
+    anchor_diff = chromatic - black  # [6, 3]
+    anchor_l = (anchor_diff * a_unit).sum(dim=-1, keepdim=True)  # [6, 1]
+    anchor_on_axis = black + anchor_l * a_unit  # [6, 3]
+    anchor_chroma = chromatic - anchor_on_axis  # [6, 3] chroma vectors
+    anchor_r = anchor_chroma.norm(dim=-1)  # [6] radii
+
     # Standard hue for each anchor: R=0, B=4/6, G=2/6, M=5/6, C=3/6, Y=1/6
     anchor_hues = torch.tensor([0.0, 4.0/6.0, 2.0/6.0, 5.0/6.0, 3.0/6.0, 1.0/6.0],
                                device=chromatic.device, dtype=chromatic.dtype)
 
-    # Sort anchors by hue for polygon interpolation
-    sorted_hues, sort_idx = anchor_hues.sort()
-    sorted_chromatic = chromatic[sort_idx]  # [6, 3]
+    # Sort by ANGLE (same as _angle_to_hue) to match segment structure
+    sorted_angles, sort_idx = anchor_angles.sort()
+    sorted_hues = anchor_hues[sort_idx]
+    sorted_radii = anchor_r[sort_idx]  # [6]
 
-    # For each input hue, find which polygon segment it falls in and interpolate
+    # Iterate segments in angle order (same as _angle_to_hue)
+    n = 6
     result = torch.zeros(h.shape + (3,), device=chromatic.device, dtype=chromatic.dtype)
 
-    for i in range(6):
-        j = (i + 1) % 6
+    for i in range(n):
+        j = (i + 1) % n
         h_start = sorted_hues[i]
         h_end = sorted_hues[j]
 
-        if j == 0:
-            h_end = h_end + 1.0  # wraparound
+        # Hue span with wraparound (same logic as _angle_to_hue)
+        h_diff = h_end - h_start
+        if abs(h_diff) > 0.5:
+            if h_diff > 0:
+                h_diff -= 1.0
+            else:
+                h_diff += 1.0
 
-        span = h_end - h_start
-        if span < 1e-10:
+        if abs(h_diff) < 1e-10:
             continue
 
-        if j == 0:
-            mask = (h >= h_start) | (h < sorted_hues[0])
-            h_shifted = torch.where(h < h_start, h + 1.0, h)
+        # Determine hue range for this segment
+        h_end_unwrapped = h_start + h_diff
+
+        # Build mask for which input hues fall in this segment
+        if h_diff > 0:
+            if h_end_unwrapped > 1.0:
+                mask = (h >= h_start) | (h < (h_end_unwrapped - 1.0))
+                h_shifted = torch.where(h < h_start, h + 1.0, h)
+            else:
+                mask = (h >= h_start) & (h < h_end_unwrapped)
+                h_shifted = h
         else:
-            mask = (h >= h_start) & (h < h_end)
-            h_shifted = h
+            # Hue decreases
+            if h_end_unwrapped < 0.0:
+                mask = (h <= h_start) | (h > (h_end_unwrapped + 1.0))
+                h_shifted = torch.where(h > h_start, h - 1.0, h)
+            else:
+                mask = (h <= h_start) & (h > h_end_unwrapped)
+                h_shifted = h
 
-        frac = ((h_shifted - h_start) / span).clamp(0, 1)
+        frac = ((h_shifted - h_start) / h_diff).clamp(0, 1)
 
-        interp = sorted_chromatic[i] + frac.unsqueeze(-1) * (sorted_chromatic[j] - sorted_chromatic[i])
-        result = torch.where(mask.unsqueeze(-1), interp, result)
+        # Interpolate radius
+        interp_r = sorted_radii[i] + frac * (sorted_radii[j] - sorted_radii[i])
+
+        # Interpolate angle
+        a_start = sorted_angles[i]
+        a_end = sorted_angles[j]
+        a_span = a_end - a_start
+        if a_span < 0:
+            a_span += 2 * math.pi
+        interp_angle = (a_start + frac * a_span) % (2 * math.pi)
+
+        # Reconstruct 3D chroma vector
+        interp_vec = interp_r.unsqueeze(-1) * (
+            torch.cos(interp_angle).unsqueeze(-1) * e1
+            + torch.sin(interp_angle).unsqueeze(-1) * e2
+        )
+
+        result = torch.where(mask.unsqueeze(-1), interp_vec, result)
 
     return result
