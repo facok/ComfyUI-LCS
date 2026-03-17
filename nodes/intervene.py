@@ -16,6 +16,20 @@ SCALE_FACTOR = 0.3611
 SHIFT_FACTOR = 0.1159
 
 
+def _find_step_index(sigma, sigmas):
+    """Find the step index for a given sigma value in the sigma schedule.
+
+    Uses torch.isclose for robust matching across dtype differences (e.g. bfloat16
+    sigma vs float32 sample_sigmas), with argmin fallback for edge cases.
+    """
+    sigma_val = sigma.flatten()[0].float()
+    sigmas_f = sigmas.float()
+    matched = torch.isclose(sigmas_f, sigma_val, rtol=1e-3, atol=1e-5).nonzero()
+    if len(matched) > 0:
+        return matched[0].item()
+    return (sigmas_f - sigma_val).abs().argmin().item()
+
+
 def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, end_step, mask):
     """Build the post_cfg_function closure for color intervention.
 
@@ -26,27 +40,15 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
         denoised = args["denoised"]  # [B, 16, H, W] in process_in space
         sigma = args["sigma"]
 
-        # Determine current step
-        sigma_val = float(sigma.flatten()[0])
-
-        # Get step index from sample_sigmas
+        # Determine current step index
         sigmas = args["model_options"]["transformer_options"]["sample_sigmas"]
-        step_index = None
-        matched = (sigmas == sigma_val).nonzero()
-        if len(matched) > 0:
-            step_index = matched[0].item()
-        else:
-            for i in range(len(sigmas) - 1):
-                if (sigmas[i] - sigma_val) * (sigmas[i + 1] - sigma_val) <= 0:
-                    step_index = i
-                    break
-        if step_index is None:
-            return denoised
+        step_index = _find_step_index(sigma, sigmas)
 
         # Check if in intervention range
         if step_index < start_step or step_index > end_step:
             return denoised
 
+        sigma_val = float(sigma.flatten()[0])
         device = denoised.device
         dtype = denoised.dtype
 
@@ -331,25 +333,14 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
         denoised = args["denoised"]  # [B, 16, H, W] in process_in space
         sigma = args["sigma"]
 
-        # Determine current step
-        sigma_val = float(sigma.flatten()[0])
-
+        # Determine current step index
         sigmas = args["model_options"]["transformer_options"]["sample_sigmas"]
-        step_index = None
-        matched = (sigmas == sigma_val).nonzero()
-        if len(matched) > 0:
-            step_index = matched[0].item()
-        else:
-            for i in range(len(sigmas) - 1):
-                if (sigmas[i] - sigma_val) * (sigmas[i + 1] - sigma_val) <= 0:
-                    step_index = i
-                    break
-        if step_index is None:
-            return denoised
+        step_index = _find_step_index(sigma, sigmas)
 
         if step_index < start_step or step_index > end_step:
             return denoised
 
+        sigma_val = float(sigma.flatten()[0])
         device = denoised.device
         dtype = denoised.dtype
 
