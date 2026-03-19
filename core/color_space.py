@@ -168,7 +168,7 @@ def decode_lcs_to_hsl(c, anchor_lcs, anchor_angles):
     bicone_factor = bicone_factor.clamp(min=1e-10)
 
     # Find the chroma boundary at this hue (perpendicular to achromatic axis)
-    chroma_boundary = _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black)
+    chroma_boundary = _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black, a)
     max_radius = chroma_boundary.norm(dim=-1) + 1e-10
     s = chroma_dist / (max_radius * bicone_factor)
     s = s.clamp(0.0, 1.0)
@@ -195,8 +195,8 @@ def encode_hsl_to_lcs(h, s, l, anchor_lcs, anchor_angles):
     # Lightness point on achromatic axis
     c_L = black + l.unsqueeze(-1) * a  # [..., 3]
 
-    # Chroma direction vector (perpendicular to achromatic axis)
-    chroma_dir = _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black)
+    # Chroma direction vector (equatorial radius at this hue)
+    chroma_dir = _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black, a)
 
     # Combine: c = c_L + s * (1 - |2l-1|) * chroma_dir
     bicone_factor = 1.0 - (2.0 * l - 1.0).abs()  # [...]
@@ -250,34 +250,44 @@ def _angle_to_hue(angle, sorted_angles, sorted_hues):
     return h
 
 
-def _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black):
-    """Map hue values [...] to chroma direction vectors perpendicular to the achromatic axis.
+def _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black, a):
+    """Map hue values [...] to EQUATORIAL chroma direction vectors.
 
     Returns vectors in 3D LCS space that lie in the chromatic plane (perpendicular to a_unit)
-    with magnitude equal to the polygon boundary radius at that hue.
+    with magnitude equal to the equatorial chroma radius at that hue (i.e., the radius at l=0.5).
 
-    Uses the same angle-sorted segment structure as _angle_to_hue to ensure
-    encode/decode round-trip consistency.
+    The equatorial radius is computed by normalizing each anchor's chroma radius by its
+    bicone factor (1 - |2L - 1|), where L is the anchor's lightness. This ensures proper
+    round-trip encoding/decoding across the bicone.
 
     chromatic: [6, 3] anchor LCS positions
     anchor_angles: [6] calibrated angles of chromatic anchors (radians)
     a_unit: [3] unit vector along achromatic axis
     e1, e2: [3] orthonormal basis for chromatic plane
     black: [3] black anchor position
+    a: [3] full achromatic axis vector (white - black)
     """
-    # Project each chromatic anchor onto the chromatic plane to get chroma radii
+    # Compute each anchor's lightness (scalar projection onto achromatic axis)
+    a_sq = (a * a).sum() + 1e-10
     anchor_diff = chromatic - black  # [6, 3]
-    anchor_l = (anchor_diff * a_unit).sum(dim=-1, keepdim=True)  # [6, 1]
-    anchor_on_axis = black + anchor_l * a_unit  # [6, 3]
+    anchor_l = (anchor_diff * a).sum(dim=-1) / a_sq  # [6] lightness values
+
+    # Project anchors onto chromatic plane to get chroma vectors
+    anchor_on_axis = black + anchor_l.unsqueeze(-1) * a  # [6, 3]
     anchor_chroma = chromatic - anchor_on_axis  # [6, 3] chroma vectors
-    anchor_r = anchor_chroma.norm(dim=-1)  # [6] radii
+    anchor_r = anchor_chroma.norm(dim=-1)  # [6] radii at anchor lightness
+
+    # Normalize to equatorial radii (radius at l=0.5 where bicone_factor=1)
+    # bicone_factor = 1 - |2L - 1|
+    bicone_factors = (1.0 - (2.0 * anchor_l - 1.0).abs()).clamp(min=1e-6)  # [6]
+    equatorial_r = anchor_r / bicone_factors  # [6] equatorial radii
 
     anchor_hues = torch.tensor(_ANCHOR_HUES, device=chromatic.device, dtype=chromatic.dtype)
 
     # Sort by ANGLE (same as _angle_to_hue) to match segment structure
     sorted_angles, sort_idx = anchor_angles.sort()
     sorted_hues = anchor_hues[sort_idx]
-    sorted_radii = anchor_r[sort_idx]  # [6]
+    sorted_radii = equatorial_r[sort_idx]  # [6] equatorial radii
 
     # Iterate segments in angle order (same as _angle_to_hue)
     n = 6
