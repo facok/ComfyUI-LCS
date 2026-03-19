@@ -7,7 +7,7 @@ from comfy_api.latest import io
 from ..core.lcs_data import LCSData
 from ..core.patchify import patchify, unpatchify
 from ..core.timestep import get_alpha_beta, get_alpha_beta_t50, normalize_to_t50, denormalize_from_t50
-from ..core.color_space import hex_to_hsl, encode_hsl_to_lcs, decode_lcs_to_hsl
+from ..core.color_space import hex_to_hsl, encode_hsl_to_lcs, decode_lcs_to_hsl, _hue_lerp
 
 LCS_DATA = io.Custom("LCS_DATA")
 
@@ -177,15 +177,6 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
         return modified.to(dtype)
 
     return post_cfg_fn
-
-
-def _hue_lerp(h1, h2, t):
-    """Lerp hues on the circle [0,1], taking the shortest path."""
-    diff = h2 - h1
-    # Wrap to [-0.5, 0.5]
-    diff = diff - (diff > 0.5).float() + (diff < -0.5).float()
-    result = h1 + t * diff
-    return result % 1.0
 
 
 class LCSColorIntervene(io.ComfyNode):

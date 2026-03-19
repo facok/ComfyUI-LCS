@@ -6,7 +6,7 @@ cause image blurriness or quality degradation during LCS intervention.
 
 import torch
 import math
-from .color_space import decode_lcs_to_hsl, encode_hsl_to_lcs
+from .color_space import decode_lcs_to_hsl, encode_hsl_to_lcs, _hue_lerp
 from .timestep import get_alpha_beta, get_alpha_beta_t50, normalize_to_t50, denormalize_from_t50
 
 # Test constants
@@ -111,12 +111,13 @@ def test_type_ii_uniformity(anchor_lcs, anchor_angles):
     s_new = torch.full_like(s_cur, t_s)
     l_new = torch.full_like(l_cur, t_l)
 
+    # Compute input variance once (patches never changes)
+    input_var = patches.var(dim=0).mean().item()
+
     # Test different strengths
     for strength in _TEST_STRENGTHS:
-        # Hue lerp (wrap to [-0.5, 0.5])
-        diff = t_h - h_cur
-        diff = diff - (diff > 0.5).float() + (diff < -0.5).float()
-        h_interp = (h_cur + strength * diff) % 1.0
+        # Hue lerp using shared helper
+        h_interp = _hue_lerp(h_cur, h_new, strength)
         s_interp = (s_cur + strength * (s_new - s_cur)).clamp(0, 1)
         l_interp = (l_cur + strength * (l_new - l_cur)).clamp(0, 1)
 
@@ -124,7 +125,6 @@ def test_type_ii_uniformity(anchor_lcs, anchor_angles):
         new_patches = encode_hsl_to_lcs(h_interp, s_interp, l_interp, anchor_lcs, anchor_angles)
 
         # Measure variance loss
-        input_var = patches.var(dim=0).mean().item()
         output_var = new_patches.var(dim=0).mean().item()
         var_ratio = output_var / (input_var + 1e-10)
 
@@ -145,10 +145,10 @@ def test_early_timestep_amplification():
     """
     # Typical LCS coordinate magnitude at t=50
     c_ref = torch.tensor(_T50_REFERENCE_COORD, dtype=torch.float32)
+    alpha_50, beta_50 = get_alpha_beta_t50()  # Constant across all sigmas
 
     for sigma in [1.0, 0.99, 0.95, 0.90, 0.85, 0.80, 0.50, 0.0]:
         alpha_t, beta_t = get_alpha_beta(sigma)
-        alpha_50, beta_50 = get_alpha_beta_t50()
 
         # Simulate a noisy observation at timestep t
         # In diffusion, the observation is alpha_t * clean + beta_t * noise

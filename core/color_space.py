@@ -30,6 +30,16 @@ def _bicone_factor(l, clamp_min=None):
     return factor
 
 
+def _wrap_hue_diff(diff):
+    """Wrap hue differences to the shortest path on the unit circle [-0.5, 0.5]."""
+    return diff - (diff > 0.5).float() + (diff < -0.5).float()
+
+
+def _hue_lerp(h1, h2, t):
+    """Lerp hues on the circle [0,1], taking the shortest path."""
+    return (h1 + t * _wrap_hue_diff(h2 - h1)) % 1.0
+
+
 def _chromatic_plane_basis(a):
     """Build orthonormal basis (a_unit, e1, e2) for the chromatic plane perpendicular to a."""
     a_unit = a / (a.norm() + 1e-10)
