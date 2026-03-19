@@ -53,6 +53,9 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
     """
     device = comfy.model_management.intermediate_device()
 
+    print(f"\n[LCS Calibration] Starting calibration for {num_colors} colors...")
+    print(f"[LCS Calibration] Image size: {image_size}x{image_size}, Batch size: {batch_size}")
+
     # Step 1: Sample colors uniformly from HSV (full saturation, full value for diversity)
     colors = []
     for i in range(num_colors):
@@ -67,6 +70,9 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
     # Step 2+3: Encode and average patches
     vectors = []
     pbar = comfy.utils.ProgressBar(num_colors)
+
+    num_batches = (num_colors + batch_size - 1) // batch_size
+    print(f"[LCS Calibration] Encoding {num_colors} color images in {num_batches} batches...")
 
     for batch_start in range(0, num_colors, batch_size):
         batch_end = min(batch_start + batch_size, num_colors)
@@ -95,8 +101,10 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
 
     # Stack all vectors: [N, 64]
     X = torch.stack(vectors, dim=0).float()
+    print(f"[LCS Calibration] Collected {X.shape[0]} patch vectors of dimension {X.shape[1]}")
 
     # Step 4: PCA
+    print("[LCS Calibration] Computing PCA...")
     mean = X.mean(dim=0)  # [64]
     X_centered = X - mean
     # SVD for PCA
@@ -104,9 +112,16 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
     # Top 3 components: B = V[:, :3] (columns are principal directions)
     basis = Vh[:3].T  # [64, 3] (Vh rows are right singular vectors)
 
+    # Variance explained
+    total_var = (S ** 2).sum()
+    explained = (S[:3] ** 2) / total_var
+    print(f"[LCS Calibration] Top 3 components explain {explained.sum():.1%} variance")
+    print(f"[LCS Calibration]   PC1: {explained[0]:.1%}, PC2: {explained[1]:.1%}, PC3: {explained[2]:.1%}")
+
     # Step 5: Encode 8 anchor colors → LCS coords
+    print("[LCS Calibration] Encoding 8 anchor colors...")
     anchor_lcs_list = []
-    for r, g, b in ANCHOR_COLORS_RGB:
+    for i, (r, g, b) in enumerate(ANCHOR_COLORS_RGB):
         img = torch.zeros(1, image_size, image_size, 3, dtype=torch.float32, device="cpu")
         img[0, :, :, 0] = r
         img[0, :, :, 1] = g
@@ -122,6 +137,9 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
 
     # Compute hue angles for 6 chromatic anchors
     anchor_angles = _compute_anchor_angles(anchor_lcs, basis, mean)
+
+    print(f"[LCS Calibration] Complete! Basis shape: {basis.shape}")
+    print(f"[LCS Calibration] Anchor LCS coords:\n{anchor_lcs}")
 
     return LCSData(
         basis=basis,
