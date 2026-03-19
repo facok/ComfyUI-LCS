@@ -6,8 +6,15 @@ cause image blurriness or quality degradation during LCS intervention.
 
 import torch
 import math
-from .color_space import decode_lcs_to_hsl, encode_hsl_to_lcs, _ANCHOR_HUES, _chromatic_plane_basis
+from .color_space import decode_lcs_to_hsl, encode_hsl_to_lcs
 from .timestep import get_alpha_beta, get_alpha_beta_t50, normalize_to_t50, denormalize_from_t50
+
+# Test constants
+_T50_REFERENCE_COORD = [0.5, 0.3, 0.1]  # Typical LCS magnitude at t=50
+_TEST_STRENGTHS = [0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0]  # Range from none to overshoot
+_VARIATION_SCALE = 0.5  # Scale for test patch variation
+_NOISE_SCALE = 2.0  # Simulated diffusion noise magnitude
+_PROBLEMATIC_AMPLIFICATION_THRESHOLD = 50  # >50x noise amplification is problematic
 
 
 def test_round_trip_consistency(anchor_lcs, anchor_angles):
@@ -56,7 +63,7 @@ def test_normalization_stability():
     Identifies timesteps where numerical instability could cause issues.
     """
     # Sample LCS coordinates at t=50 (clean image reference)
-    c_t50 = torch.tensor([0.5, 0.3, 0.1], dtype=torch.float32)
+    c_t50 = torch.tensor(_T50_REFERENCE_COORD, dtype=torch.float32)
     alpha_50, beta_50 = get_alpha_beta_t50()
 
     results = []
@@ -90,25 +97,23 @@ def test_type_ii_uniformity(anchor_lcs, anchor_angles):
     This is a key diagnostic for the blurriness issue - if all patches
     converge to the same HSL values, the image loses detail.
     """
-    black, white = anchor_lcs[6], anchor_lcs[7]
-
     # Create diverse patch set (simulate image with color variation)
-    patches = torch.randn(100, 3) * 0.5 + torch.tensor([0.3, 0.2, 0.1])  # 100 varied patches
+    patches = torch.randn(100, 3) * _VARIATION_SCALE + torch.tensor([0.3, 0.2, 0.1])
 
     # Target color (e.g., saturated red)
     t_h, t_s, t_l = 0.0, 1.0, 0.5
 
+    # Decode all patches ONCE (constant across strengths)
+    h_cur, s_cur, l_cur = decode_lcs_to_hsl(patches, anchor_lcs, anchor_angles)
+
+    # Target HSL tensors
+    h_new = torch.full_like(h_cur, t_h)
+    s_new = torch.full_like(s_cur, t_s)
+    l_new = torch.full_like(l_cur, t_l)
+
     # Test different strengths
-    for strength in [0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0]:
-        # Decode all patches
-        h_cur, s_cur, l_cur = decode_lcs_to_hsl(patches, anchor_lcs, anchor_angles)
-
-        # Shift towards target (Type II logic)
-        h_new = torch.full_like(h_cur, t_h)
-        s_new = torch.full_like(s_cur, t_s)
-        l_new = torch.full_like(l_cur, t_l)
-
-        # Hue lerp
+    for strength in _TEST_STRENGTHS:
+        # Hue lerp (wrap to [-0.5, 0.5])
         diff = t_h - h_cur
         diff = diff - (diff > 0.5).float() + (diff < -0.5).float()
         h_interp = (h_cur + strength * diff) % 1.0
@@ -139,7 +144,7 @@ def test_early_timestep_amplification():
     in normalize_to_t50. This could amplify noise and corrupt the signal.
     """
     # Typical LCS coordinate magnitude at t=50
-    c_ref = torch.tensor([0.5, 0.3, 0.1], dtype=torch.float32)
+    c_ref = torch.tensor(_T50_REFERENCE_COORD, dtype=torch.float32)
 
     for sigma in [1.0, 0.99, 0.95, 0.90, 0.85, 0.80, 0.50, 0.0]:
         alpha_t, beta_t = get_alpha_beta(sigma)
@@ -148,7 +153,7 @@ def test_early_timestep_amplification():
         # Simulate a noisy observation at timestep t
         # In diffusion, the observation is alpha_t * clean + beta_t * noise
         # At high sigma, noise dominates
-        noise = torch.randn(3) * 2.0  # Significant noise
+        noise = torch.randn(3) * _NOISE_SCALE
         c_observed = alpha_t + beta_t * c_ref + beta_t * noise
 
         # Normalize to t=50
@@ -171,7 +176,6 @@ def analyze_blurriness_causes(lcs_data_path=None):
     # Load actual calibration data
     if lcs_data_path is None:
         from pathlib import Path
-        import glob
         data_dir = Path(__file__).parent.parent / "data"
         safetensors_files = list(data_dir.glob("lcs_*.safetensors"))
         if safetensors_files:
@@ -199,8 +203,8 @@ def analyze_blurriness_causes(lcs_data_path=None):
     print("\n2. NORMALIZATION STABILITY TEST")
     print("-" * 40)
     norm_results = test_normalization_stability()
-    problematic = [r for r in norm_results if r['amplification'] > 50]
-    print(f"Timesteps with >50x amplification: {len(problematic)}")
+    problematic = [r for r in norm_results if r['amplification'] > _PROBLEMATIC_AMPLIFICATION_THRESHOLD]
+    print(f"Timesteps with >{_PROBLEMATIC_AMPLIFICATION_THRESHOLD}x amplification: {len(problematic)}")
     for r in problematic[:5]:
         print(f"  t={r['t']:2d} (sigma={r['sigma']:.2f}): amp={r['amplification']:.1f}x")
 

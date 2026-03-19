@@ -11,6 +11,25 @@ import torch
 _ANCHOR_HUES = (0.0, 4.0/6.0, 2.0/6.0, 5.0/6.0, 3.0/6.0, 1.0/6.0)
 
 
+def _bicone_factor(l, clamp_min=None):
+    """Compute bicone scaling factor: 1 - |2L - 1|.
+
+    At l=0.5 (equator), factor=1 (full radius).
+    At l=0 or l=1 (poles), factor=0 (zero radius).
+
+    Args:
+        l: Lightness tensor [...]
+        clamp_min: Optional minimum value for numerical stability
+
+    Returns:
+        Bicone factor tensor [...]
+    """
+    factor = 1.0 - (2.0 * l - 1.0).abs()
+    if clamp_min is not None:
+        factor = factor.clamp(min=clamp_min)
+    return factor
+
+
 def _chromatic_plane_basis(a):
     """Build orthonormal basis (a_unit, e1, e2) for the chromatic plane perpendicular to a."""
     a_unit = a / (a.norm() + 1e-10)
@@ -87,7 +106,7 @@ def hsl_to_rgb(h, s, l):
 
 def _hsl_to_rgb_tensor(h, s, l):
     """Vectorized HSL→RGB for tensors."""
-    c = (1.0 - (2.0 * l - 1.0).abs()) * s
+    c = _bicone_factor(l) * s
     h6 = h * 6.0
     x = c * (1.0 - ((h6 % 2.0) - 1.0).abs())
     m = l - c / 2.0
@@ -164,8 +183,7 @@ def decode_lcs_to_hsl(c, anchor_lcs, anchor_angles):
 
     # Saturation: distance to achromatic axis normalized by max distance
     # Max distance at this hue and lightness
-    bicone_factor = 1.0 - (2.0 * l - 1.0).abs()  # [...]
-    bicone_factor = bicone_factor.clamp(min=1e-10)
+    bicone_factor = _bicone_factor(l, clamp_min=1e-10)
 
     # Find the chroma boundary at this hue (perpendicular to achromatic axis)
     chroma_boundary = _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black, a)
@@ -199,7 +217,7 @@ def encode_hsl_to_lcs(h, s, l, anchor_lcs, anchor_angles):
     chroma_dir = _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black, a)
 
     # Combine: c = c_L + s * (1 - |2l-1|) * chroma_dir
-    bicone_factor = 1.0 - (2.0 * l - 1.0).abs()  # [...]
+    bicone_factor = _bicone_factor(l)
     c = c_L + (s * bicone_factor).unsqueeze(-1) * chroma_dir
 
     return c
@@ -278,8 +296,7 @@ def _hue_to_chroma_vector(h, chromatic, anchor_angles, a_unit, e1, e2, black, a)
     anchor_r = anchor_chroma.norm(dim=-1)  # [6] radii at anchor lightness
 
     # Normalize to equatorial radii (radius at l=0.5 where bicone_factor=1)
-    # bicone_factor = 1 - |2L - 1|
-    bicone_factors = (1.0 - (2.0 * anchor_l - 1.0).abs()).clamp(min=1e-6)  # [6]
+    bicone_factors = _bicone_factor(anchor_l, clamp_min=1e-6)  # [6]
     equatorial_r = anchor_r / bicone_factors  # [6] equatorial radii
 
     anchor_hues = torch.tensor(_ANCHOR_HUES, device=chromatic.device, dtype=chromatic.dtype)
