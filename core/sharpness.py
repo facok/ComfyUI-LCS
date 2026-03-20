@@ -136,10 +136,12 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
     rng = torch.Generator().manual_seed(42)
 
     # Step 1: Generate all base images upfront [num_samples, 3, H, W]
-    # Use noise (not solid color) — spatial detail is needed for blur to have effect.
-    # Per-batch generation to limit memory.
-    print(f"[LCS Sharpness Calibration] Generating {num_samples} noise images...")
-    base_images = torch.rand(num_samples, 3, image_size, image_size, generator=rng)
+    # Use GRAYSCALE noise (same value across RGB) so that blur affects all channels
+    # identically. RGB noise introduces inter-channel variance that PCA captures
+    # as a secondary component unrelated to sharpness.
+    print(f"[LCS Sharpness Calibration] Generating {num_samples} grayscale noise images...")
+    gray_noise = torch.rand(num_samples, 1, image_size, image_size, generator=rng)
+    base_images = gray_noise.expand(num_samples, 3, image_size, image_size).contiguous()
 
     # Step 2+3: For each blur level, apply blur to ALL base images, then encode
     vectors = []
@@ -176,6 +178,20 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
     X = torch.stack(vectors, dim=0).float()
     blur_labels_t = torch.tensor(blur_labels, dtype=torch.float32)
     print(f"[LCS Sharpness Calibration] Collected {X.shape[0]} vectors of dimension {X.shape[1]}")
+
+    # Check per-blur-level mean to see if blur affects brightness in latent space
+    for bl in blur_levels:
+        mask_bl = blur_labels_t == bl
+        level_mean = X[mask_bl].mean().item()
+        print(f"[LCS Sharpness Calibration] blur σ={bl}: latent mean={level_mean:.4f} (n={mask_bl.sum().item()})")
+
+    # Remove per-vector mean BEFORE PCA.
+    # VAE encoding of blurred images shifts the latent mean (non-linear VAE effect).
+    # Without this, PCA captures brightness drift as the dominant component.
+    # Per-vector zero-mean forces PCA to find patterns in the relative channel
+    # structure, not in the absolute level — isolating true sharpness.
+    X_per_mean = X.mean(dim=1, keepdim=True)  # [N, 1]
+    X = X - X_per_mean
 
     # Optionally remove LCS color component to ensure sharpness PC1 is orthogonal to color
     if lcs_data is not None:
