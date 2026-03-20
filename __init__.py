@@ -8,6 +8,7 @@ from comfy_api.latest import ComfyExtension, io
 from .nodes.calibrate import LCSLoadData
 from .nodes.intervene import LCSColorIntervene, LCSColorBatch, LCSToneAdjust
 from .nodes.observe import LCSPreviewColors, LCSStepObserver
+from .nodes.sharpen import LCSSharpnessCalibrate, LCSSharpnessIntervene
 
 
 class LCSExtension(ComfyExtension):
@@ -22,6 +23,8 @@ class LCSExtension(ComfyExtension):
             LCSToneAdjust,
             LCSPreviewColors,
             LCSStepObserver,
+            LCSSharpnessCalibrate,
+            LCSSharpnessIntervene,
         ]
 
 
