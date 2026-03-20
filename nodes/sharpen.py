@@ -135,11 +135,15 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         patches, h_len, w_len = patchify(raw)  # [B, L, 64]
 
         # Sharpness edit: add delta along PC1 direction.
-        # pc1_dir is orthogonal to color (if calibrated with lcs_data),
-        # so this preserves color by construction.
+        # pc1_dir is orthogonal to color (if calibrated with lcs_data).
         # All other 63 dimensions are preserved because we only ADD along one direction.
-        delta = strength * shd.sign * shd.pc1_std
-        pc1_dir = shd.basis[:, 0]  # [64]
+        #
+        # Scaling: basis vectors are unit norm, so strength directly controls the
+        # L2 magnitude of the edit per patch. No pc1_std multiplication — that
+        # value represents the spread across blur levels 0-16 during calibration
+        # and produces edits far too large for denoising.
+        delta = strength * shd.sign
+        pc1_dir = shd.basis[:, 0]  # [64], unit norm
 
         if mask is not None:
             mask_flat = _downsample_mask(mask, h_len, w_len, device, dtype)
@@ -177,7 +181,7 @@ class LCSSharpnessIntervene(io.ComfyNode):
             inputs=[
                 io.Model.Input("model"),
                 SHARPNESS_DATA.Input("sharpness_data", tooltip="Calibration data from LCSSharpnessCalibrate"),
-                io.Float.Input("strength", default=0.0, min=-2.0, max=2.0, step=0.05,
+                io.Float.Input("strength", default=0.0, min=-5.0, max=5.0, step=0.1,
                                tooltip="Sharpness strength (>0 = sharper, <0 = blurrier, 0 = no change)"),
                 io.Int.Input("start_step", default=5, min=0, max=50,
                              tooltip="First step to apply sharpness intervention"),
