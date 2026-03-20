@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
-import comfy.model_management
 import comfy.utils
 
 from .patchify import patchify
@@ -74,8 +73,8 @@ def calibrate_sharpness(vae, num_samples=64, image_size=512,
                         blur_levels=(0, 1, 2, 4, 8, 16), batch_size=8):
     """Compute sharpness subspace data (PCA basis, mean, sign) from FLUX VAE.
 
-    1. Generate num_samples random grayscale solid-color images
-    2. For each blur level, apply Gaussian blur
+    1. Generate num_samples random noise images (spatial detail needed for blur)
+    2. For each blur level, apply Gaussian blur per-batch
     3. VAE encode → patchify → average patches → [64] vector
     4. PCA on all vectors → extract PC1 (+ PC2)
     5. Determine sign: positive strength = sharper
@@ -83,48 +82,44 @@ def calibrate_sharpness(vae, num_samples=64, image_size=512,
 
     Returns: SharpnessData
     """
-    device = comfy.model_management.intermediate_device()
     n_levels = len(blur_levels)
     total_images = num_samples * n_levels
 
     print(f"\n[LCS Sharpness Calibration] Starting: {num_samples} images × {n_levels} blur levels = {total_images} samples")
     print(f"[LCS Sharpness Calibration] Blur sigmas: {list(blur_levels)}")
 
-    # Step 1: Generate random grayscale base images [num_samples, 3, H, W]
-    # Use deterministic seed for reproducibility across runs
+    # Deterministic seed for reproducibility across runs
     rng = torch.Generator().manual_seed(42)
-    gray_values = torch.rand(num_samples, 1, 1, 1, generator=rng)
-    # [num_samples, 3, H, W] in BCHW for blur, will convert to BHWC for VAE
-    base_images = gray_values.expand(num_samples, 3, image_size, image_size).contiguous()
 
-    # Step 2+3: For each blur level, blur all images, VAE encode, collect patch vectors
+    # Generate and process per-batch to avoid large upfront allocation.
+    # Random noise (not solid color) — spatial detail is needed for blur to
+    # have a measurable effect on VAE encoding.
     vectors = []
     blur_labels = []  # track blur sigma per vector for sign determination
     pbar = comfy.utils.ProgressBar(total_images)
 
     for blur_sigma in blur_levels:
-        # Apply blur
-        blurred = _apply_gaussian_blur(base_images, blur_sigma)
-
-        # Encode in batches
         for batch_start in range(0, num_samples, batch_size):
-            batch_end = min(batch_start + batch_size, num_samples)
-            batch = blurred[batch_start:batch_end]  # [B, 3, H, W] BCHW
-            actual_batch = batch.shape[0]
+            actual_batch = min(batch_size, num_samples - batch_start)
+
+            # Generate random noise images per-batch [B, 3, H, W]
+            batch = torch.rand(actual_batch, 3, image_size, image_size, generator=rng)
+
+            # Apply blur (no-op for sigma=0)
+            blurred = _apply_gaussian_blur(batch, blur_sigma)
 
             # Convert BCHW → BHWC for ComfyUI VAE
-            imgs_bhwc = batch.permute(0, 2, 3, 1).contiguous().cpu()
+            imgs_bhwc = blurred.permute(0, 2, 3, 1).contiguous().cpu()
 
             # VAE encode → [B, 16, H/8, W/8]
-            latent = vae.encode(imgs_bhwc[:, :, :, :3])
+            latent = vae.encode(imgs_bhwc)
 
             # Patchify → [B, L, 64], average across patches → [B, 64]
             patches, _, _ = patchify(latent)
             avg = patches.mean(dim=1).cpu()
 
-            for j in range(actual_batch):
-                vectors.append(avg[j])
-                blur_labels.append(blur_sigma)
+            vectors.extend(avg.unbind(0))
+            blur_labels.extend([blur_sigma] * actual_batch)
 
             pbar.update(actual_batch)
 

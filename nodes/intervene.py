@@ -6,28 +6,14 @@ from comfy_api.latest import io
 
 from ..core.lcs_data import LCSData
 from ..core.patchify import patchify, unpatchify
+from ..core.sampling import SCALE_FACTOR, SHIFT_FACTOR, find_step_index
 from ..core.timestep import get_alpha_beta, get_alpha_beta_t50, normalize_to_t50, denormalize_from_t50
 from ..core.color_space import hex_to_hsl, encode_hsl_to_lcs, decode_lcs_to_hsl, _hue_lerp
 
 LCS_DATA = io.Custom("LCS_DATA")
 
-# FLUX VAE constants
-SCALE_FACTOR = 0.3611
-SHIFT_FACTOR = 0.1159
-
-
-def _find_step_index(sigma, sigmas):
-    """Find the step index for a given sigma value in the sigma schedule.
-
-    Uses torch.isclose for robust matching across dtype differences (e.g. bfloat16
-    sigma vs float32 sample_sigmas), with argmin fallback for edge cases.
-    """
-    sigma_val = sigma.flatten()[0].float()
-    sigmas_f = sigmas.float()
-    matched = torch.isclose(sigmas_f, sigma_val, rtol=1e-3, atol=1e-5).nonzero()
-    if len(matched) > 0:
-        return matched[0].item()
-    return (sigmas_f - sigma_val).abs().argmin().item()
+# Backward-compat alias for any external code that imported _find_step_index
+_find_step_index = find_step_index
 
 
 def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, end_step, mask):
