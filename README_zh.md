@@ -95,6 +95,7 @@ LCS Load Data ──→ LCS Sharpness Calibrate → LCS Sharpness Intervene → 
    - 正值 → 更锐利
    - 负值 → 更模糊
    - 0 → 无变化
+![89814728](https://github.com/user-attachments/assets/62f036e9-0bea-4cc0-9220-af4c2fb8fa76)
 
 ### 批量多色生成
 
