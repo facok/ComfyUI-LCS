@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import comfy.utils
 
 from .patchify import patchify
+from .lcs_data import LCSData
 
 
 @dataclass
@@ -101,15 +102,27 @@ def _apply_gaussian_blur(images: torch.Tensor, blur_sigma: float) -> torch.Tenso
 
 def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
                         blur_levels: Tuple[float, ...] = (0, 1, 2, 4, 8, 16),
-                        batch_size: int = 8) -> SharpnessData:
+                        batch_size: int = 8,
+                        lcs_data: LCSData = None) -> SharpnessData:
     """Compute sharpness subspace data (PCA basis, mean, sign) from FLUX VAE.
 
     1. Generate num_samples random noise images (spatial detail needed for blur)
     2. For each blur level, apply Gaussian blur to the SAME images
     3. VAE encode → patchify → average patches → [64] vector
-    4. PCA on all vectors → extract PC1 (+ PC2)
-    5. Determine sign: positive strength = sharper
-    6. Compute pc1_std from spread of PC1 scores
+    4. Optionally remove LCS color component (ensures sharpness PC1 is orthogonal to color)
+    5. PCA on all vectors → extract PC1 (+ PC2)
+    6. Determine sign: positive strength = sharper
+    7. Compute pc1_std from spread of PC1 scores
+
+    Args:
+        vae: ComfyUI VAE object
+        num_samples: Number of base images to generate
+        image_size: Size of generated images
+        blur_levels: Blur sigma levels to apply
+        batch_size: Batch size for VAE encoding
+        lcs_data: Optional LCS data for removing color component during calibration.
+                  When provided, the sharpness PC1 will be orthogonal to the color subspace,
+                  preventing color shifts during intervention.
 
     Returns: SharpnessData
     """
@@ -163,6 +176,17 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
     X = torch.stack(vectors, dim=0).float()
     blur_labels_t = torch.tensor(blur_labels, dtype=torch.float32)
     print(f"[LCS Sharpness Calibration] Collected {X.shape[0]} vectors of dimension {X.shape[1]}")
+
+    # Optionally remove LCS color component to ensure sharpness PC1 is orthogonal to color
+    if lcs_data is not None:
+        print("[LCS Sharpness Calibration] Removing LCS color component...")
+        lcs_mean = lcs_data.mean.to(X.device, X.dtype)
+        lcs_basis = lcs_data.basis.to(X.device, X.dtype)
+        centered = X - lcs_mean
+        lcs_coords = centered @ lcs_basis  # [N, 3]
+        color_reconstruction = lcs_coords @ lcs_basis.T + lcs_mean
+        X = X - (color_reconstruction - lcs_mean)
+        print("[LCS Sharpness Calibration] Color component removed")
 
     # Step 4: PCA
     print("[LCS Sharpness Calibration] Computing PCA...")

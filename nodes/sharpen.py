@@ -9,10 +9,12 @@ from safetensors.torch import save_file, load_file
 
 from ..core.sharpness import SharpnessData, calibrate_sharpness
 from ..core.calibration import vae_fingerprint
+from ..core.lcs_data import LCSData
 from ..core.patchify import patchify, unpatchify
 from ..core.sampling import SCALE_FACTOR, SHIFT_FACTOR, find_step_index
 
 SHARPNESS_DATA = io.Custom("SHARPNESS_DATA")
+LCS_DATA = io.Custom("LCS_DATA")
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 
@@ -44,6 +46,10 @@ class LCSSharpnessCalibrate(io.ComfyNode):
     Generates blur stimuli at varying sigma levels, VAE-encodes them,
     and runs PCA to find the sharpness direction in 64D patch space.
     Result is cached per-VAE fingerprint.
+
+    When lcs_data is provided, the color component is removed during calibration,
+    ensuring the sharpness PC1 is orthogonal to the color subspace. This prevents
+    color shifts during sharpness intervention.
     """
 
     @classmethod
@@ -52,9 +58,10 @@ class LCSSharpnessCalibrate(io.ComfyNode):
             node_id="LCSSharpnessCalibrate",
             display_name="LCS Sharpness Calibrate",
             category="LCS/calibration",
-            description="Auto-calibrate and cache sharpness subspace data per-VAE",
+            description="Auto-calibrate and cache sharpness subspace data per-VAE. Connect lcs_data to ensure sharpness edits don't affect color.",
             inputs=[
                 io.Vae.Input("vae", tooltip="VAE model (calibration is cached per-VAE)"),
+                LCS_DATA.Input("lcs_data", optional=True, tooltip="Optional: remove color component to prevent color shifts"),
             ],
             outputs=[
                 SHARPNESS_DATA.Output(display_name="sharpness_data"),
@@ -62,14 +69,16 @@ class LCSSharpnessCalibrate(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, vae) -> io.NodeOutput:
+    def execute(cls, vae, lcs_data=None) -> io.NodeOutput:
         fp = vae_fingerprint(vae)
-        cache_path = os.path.join(DATA_DIR, f"sharpness_{fp}.safetensors")
+        # Include "_lcs" suffix in cache name if LCS was used (different subspace)
+        suffix = "_lcs" if lcs_data is not None else ""
+        cache_path = os.path.join(DATA_DIR, f"sharpness_{fp}{suffix}.safetensors")
 
         if os.path.exists(cache_path):
             data = _load_sharpness(cache_path)
         else:
-            data = calibrate_sharpness(vae)
+            data = calibrate_sharpness(vae, lcs_data=lcs_data)
             _save_sharpness(data, cache_path)
 
         return io.NodeOutput(data)
