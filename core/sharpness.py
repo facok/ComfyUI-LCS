@@ -100,7 +100,7 @@ def _apply_gaussian_blur(images: torch.Tensor, blur_sigma: float) -> torch.Tenso
         return blurred
 
 
-def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
+def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 256,
                         blur_levels: Tuple[float, ...] = (0, 0.5, 1, 2, 4, 8),
                         batch_size: int = 8,
                         lcs_data: LCSData = None) -> SharpnessData:
