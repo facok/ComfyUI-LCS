@@ -1,6 +1,6 @@
 # ComfyUI-LCS
 
-Training-free color control via the **Latent Color Subspace**.
+Training-free color control via the **Latent Color Subspace**, plus **sharpness control** via a discovered sharpness subspace.
 
 > **Note:** This is an unofficial community implementation. For the official code, see [ExplainableML/LCS](https://github.com/ExplainableML/LCS).
 
@@ -40,6 +40,7 @@ LCS calibrates per-VAE, so it should work with any model using a compatible VAE.
 - **Color Steering** — Push colors toward any target color
 - **Batch Multi-Color** — Different colors per batch item
 - **Tone Adjustment** — Contrast, brightness, saturation, temperature with one-click presets
+- **Sharpness Control** — Sharpen or blur during generation via a discovered sharpness subspace (PC1 explains ~97% variance)
 - **Localized Control** — Optional mask for region-specific changes
 - **Latent Color Preview** — Visualize color structure without VAE decoding
 - **Step Observer** — Per-step color previews for debugging
@@ -82,6 +83,19 @@ LCS Load Data → LCS Tone Adjust → KSampler
 
 ![3d3c82eb0e89ed1608e40ac7a8cc3408](https://github.com/user-attachments/assets/62868e2d-0275-4801-a9bd-606bfea3ce2f)
 
+### Sharpness Control
+
+```
+LCS Load Data ──→ LCS Sharpness Calibrate → LCS Sharpness Intervene → KSampler
+                        ↑ lcs_data
+```
+
+1. **LCS Sharpness Calibrate** — connect VAE (auto-calibrates and caches). Optionally connect `lcs_data` from LCS Load Data to ensure sharpness edits don't affect color.
+2. **LCS Sharpness Intervene** — connect MODEL and SHARPNESS_DATA, set strength
+   - Positive strength → sharper
+   - Negative strength → blurrier
+   - 0 → no change
+
 ### Multi-Color Batch
 
 ```
@@ -98,7 +112,8 @@ Enter comma-separated hex colors (e.g., `#FF0000,#00FF00,#0000FF`). Each color a
 
 | Node | Description |
 |------|-------------|
-| **LCS Load Data** | Auto-calibrate and cache LCS data per-VAE. Fingerprints VAE weights for automatic cache management — just connect your VAE. |
+| **LCS Load Data** | Auto-calibrate and cache LCS color data per-VAE. Fingerprints VAE weights for automatic cache management. |
+| **LCS Sharpness Calibrate** | Discover sharpness subspace via PCA on blur stimuli. Optionally connect `lcs_data` for color-orthogonal sharpness. |
 
 Calibration runs once per VAE and caches automatically. Subsequent runs load instantly.
 
@@ -109,6 +124,7 @@ Calibration runs once per VAE and caches automatically. Subsequent runs load ins
 | **LCS Color Intervene** | Steer colors toward a target. Supports Type I (LCS shift), Type II (HSL shift), or interpolated mode. |
 | **LCS Color Batch** | Different target colors per batch item. Outputs `batch_size` for EmptyLatentImage. |
 | **LCS Tone Adjust** | Contrast, brightness, saturation, temperature. Preset dropdown with real-time slider sync. |
+| **LCS Sharpness Intervene** | Control sharpness during generation. Positive = sharper, negative = blurrier. |
 
 ### Observation
 
@@ -127,9 +143,15 @@ Calibration runs once per VAE and caches automatically. Subsequent runs load ins
 
 ## Key Parameters
 
+### Color Intervention
 - **strength** (0.0–2.0): Intervention intensity. 1.0 = full, 0.0 = none.
 - **start_step / end_step**: Step range for intervention. Paper optimal: steps 8–10 of 50.
 - **mask**: Optional. Downsampled to patch grid for localized control.
+
+### Sharpness Intervention
+- **strength** (-5.0–5.0): Positive = sharper, negative = blurrier, 0 = no change.
+- **start_step / end_step**: Step range (default 5–15).
+- **mask**: Optional. Localized sharpness control.
 
 ## Tone Presets
 
@@ -150,6 +172,8 @@ Select a preset — sliders update in real-time. Tweak after selecting for fine-
 
 ## How It Works
 
+### Color (LCS)
+
 1. **Project** — Convert denoised prediction to 64D patch space, project onto 3D LCS basis
 2. **Decompose** — Separate 3D color coordinates from the 61D structural residual
 3. **Normalize** — Transform to reference timestep (t=50) using learned alpha/beta statistics
@@ -158,6 +182,13 @@ Select a preset — sliders update in real-time. Tweak after selecting for fine-
 
 The 61D residual (structure, texture, detail) is never modified — only the 3D color subspace is touched.
 
+### Sharpness
+
+Sharpness lives in a separate subspace orthogonal to color:
+
+1. **Calibrate** — Generate grayscale noise images at multiple blur levels, VAE-encode, PCA on color-removed patch vectors. PC1 captures ~97% of sharpness variance.
+2. **Intervene** — Add `strength * pc1_direction` to each patch. Since pc1_direction is orthogonal to color (calibrated with LCS removal) and DC-free (per-vector zero-mean before PCA), this modifies only spatial frequency content without affecting color or brightness.
+
 ## File Structure
 
 ```
@@ -165,16 +196,19 @@ ComfyUI-LCS/
 ├── __init__.py           # Entry point (V3 + V2 compat)
 ├── requirements.txt
 ├── core/
-│   ├── calibration.py    # PCA calibration pipeline
+│   ├── calibration.py    # PCA calibration pipeline (color)
 │   ├── color_space.py    # Bicone LCS ↔ HSL mapping
 │   ├── defaults.py       # Alpha/beta tables from paper
 │   ├── lcs_data.py       # LCSData dataclass
 │   ├── patchify.py       # Patch ↔ latent conversion
+│   ├── sampling.py       # Shared constants & step utilities
+│   ├── sharpness.py      # Sharpness subspace calibration
 │   └── timestep.py       # Sigma/timestep utilities
 ├── nodes/
 │   ├── calibrate.py      # LCSLoadData (auto-calibrate + cache)
 │   ├── intervene.py      # LCSColorIntervene, LCSColorBatch, LCSToneAdjust
-│   └── observe.py        # LCSPreviewColors, LCSStepObserver
+│   ├── observe.py        # LCSPreviewColors, LCSStepObserver
+│   └── sharpen.py        # LCSSharpnessCalibrate, LCSSharpnessIntervene
 ├── data/                 # Cached calibration files
 └── web/js/
     └── tone_preset.js    # Frontend preset sync
