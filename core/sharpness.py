@@ -21,7 +21,7 @@ class SharpnessData:
     """
 
     basis: torch.Tensor   # [64, K] PCA basis (columns), K typically 1-2
-    mean: torch.Tensor    # [64] PCA mean
+    mean: torch.Tensor    # [64] PCA mean (in color-removed space if lcs_data was used)
     pc1_std: float        # Standard deviation along PC1 (for normalizing strength)
     sign: float           # +1 or -1: ensures positive strength = sharper
 
