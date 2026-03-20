@@ -61,8 +61,6 @@ class LCSSharpnessCalibrate(io.ComfyNode):
             inputs=[
                 io.Vae.Input("vae", tooltip="VAE model (calibration is cached per-VAE)"),
                 LCS_DATA.Input("lcs_data", optional=True, tooltip="Optional: remove color component to prevent color shifts"),
-                io.Int.Input("image_size", default=512, min=256, max=1024, step=128,
-                             tooltip="Size of calibration images (higher = more patches averaged, may improve PCA)"),
             ],
             outputs=[
                 SHARPNESS_DATA.Output(display_name="sharpness_data"),
@@ -70,16 +68,15 @@ class LCSSharpnessCalibrate(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, vae, lcs_data=None, image_size=512) -> io.NodeOutput:
+    def execute(cls, vae, lcs_data=None) -> io.NodeOutput:
         fp = vae_fingerprint(vae)
-        # Include "_lcs" suffix in cache name if LCS was used (different subspace)
         suffix = "_lcs" if lcs_data is not None else ""
-        cache_path = os.path.join(DATA_DIR, f"sharpness_{fp}{suffix}_{image_size}.safetensors")
+        cache_path = os.path.join(DATA_DIR, f"sharpness_{fp}{suffix}.safetensors")
 
         if os.path.exists(cache_path):
             data = _load_sharpness(cache_path)
         else:
-            data = calibrate_sharpness(vae, lcs_data=lcs_data, image_size=image_size)
+            data = calibrate_sharpness(vae, lcs_data=lcs_data)
             _save_sharpness(data, cache_path)
 
         return io.NodeOutput(data)
