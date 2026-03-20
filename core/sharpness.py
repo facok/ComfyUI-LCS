@@ -100,7 +100,7 @@ def _apply_gaussian_blur(images: torch.Tensor, blur_sigma: float) -> torch.Tenso
         return blurred
 
 
-def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 256,
+def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
                         blur_levels: Tuple[float, ...] = (0, 0.5, 1, 2, 4, 8),
                         batch_size: int = 8,
                         lcs_data: LCSData = None) -> SharpnessData:
@@ -179,19 +179,12 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 256,
     blur_labels_t = torch.tensor(blur_labels, dtype=torch.float32)
     print(f"[LCS Sharpness Calibration] Collected {X.shape[0]} vectors of dimension {X.shape[1]}")
 
-    # Check per-blur-level mean to see if blur affects brightness in latent space
-    for bl in blur_levels:
-        mask_bl = blur_labels_t == bl
-        level_mean = X[mask_bl].mean().item()
-        print(f"[LCS Sharpness Calibration] blur σ={bl}: latent mean={level_mean:.4f} (n={mask_bl.sum().item()})")
-
     # Remove per-vector mean BEFORE PCA.
     # VAE encoding of blurred images shifts the latent mean (non-linear VAE effect).
     # Without this, PCA captures brightness drift as the dominant component.
     # Per-vector zero-mean forces PCA to find patterns in the relative channel
     # structure, not in the absolute level — isolating true sharpness.
-    X_per_mean = X.mean(dim=1, keepdim=True)  # [N, 1]
-    X = X - X_per_mean
+    X = X - X.mean(dim=1, keepdim=True)
 
     # Optionally remove LCS color component to ensure sharpness PC1 is orthogonal to color
     if lcs_data is not None:

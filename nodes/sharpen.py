@@ -61,7 +61,7 @@ class LCSSharpnessCalibrate(io.ComfyNode):
             inputs=[
                 io.Vae.Input("vae", tooltip="VAE model (calibration is cached per-VAE)"),
                 LCS_DATA.Input("lcs_data", optional=True, tooltip="Optional: remove color component to prevent color shifts"),
-                io.Int.Input("image_size", default=256, min=256, max=1024, step=128,
+                io.Int.Input("image_size", default=512, min=256, max=1024, step=128,
                              tooltip="Size of calibration images (higher = more patches averaged, may improve PCA)"),
             ],
             outputs=[
