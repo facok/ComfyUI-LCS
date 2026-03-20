@@ -77,11 +77,11 @@ def _apply_gaussian_blur(images: torch.Tensor, blur_sigma: float) -> torch.Tenso
         # Direct 2D convolution for small kernels
         kernel_1d = _gaussian_kernel_1d(kernel_size, blur_sigma, device, dtype)
         kernel_2d = kernel_1d[:, None] @ kernel_1d[None, :]  # outer product
-        kernel = kernel_2d.view(1, 1, kernel_size, kernel_size).expand(C, 1, -1, -1)
+        # [C, 1, K, K] for depthwise conv with groups=C
+        kernel = kernel_2d.view(1, 1, kernel_size, kernel_size).expand(C, 1, -1, -1).contiguous()
         pad = kernel_size // 2
-        images_grouped = images.view(B * C, 1, H, W)
-        blurred = F.conv2d(images_grouped, kernel, padding=pad, groups=1)
-        return blurred.view(B, C, H, W)
+        blurred = F.conv2d(images, kernel, padding=pad, groups=C)
+        return blurred
     else:
         # Separable convolution: apply 1D Gaussian in X then Y direction
         # This reduces O(k²) to O(2k) operations
@@ -89,11 +89,11 @@ def _apply_gaussian_blur(images: torch.Tensor, blur_sigma: float) -> torch.Tenso
         pad = kernel_size // 2
 
         # Horizontal pass: convolve along W dimension
-        kernel_h = gauss_1d.view(1, 1, 1, kernel_size).expand(C, 1, 1, kernel_size)
+        kernel_h = gauss_1d.view(1, 1, 1, kernel_size).expand(C, 1, 1, kernel_size).contiguous()
         blurred = F.conv2d(images, kernel_h, padding=(0, pad), groups=C)
 
         # Vertical pass: convolve along H dimension
-        kernel_v = gauss_1d.view(1, 1, kernel_size, 1).expand(C, 1, kernel_size, 1)
+        kernel_v = gauss_1d.view(1, 1, kernel_size, 1).expand(C, 1, kernel_size, 1).contiguous()
         blurred = F.conv2d(blurred, kernel_v, padding=(pad, 0), groups=C)
 
         return blurred
