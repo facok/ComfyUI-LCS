@@ -9,7 +9,6 @@ from safetensors.torch import save_file, load_file
 
 from ..core.sharpness import SharpnessData, calibrate_sharpness
 from ..core.calibration import vae_fingerprint
-from ..core.lcs_data import LCSData
 from ..core.patchify import patchify, unpatchify
 from ..core.sampling import SCALE_FACTOR, SHIFT_FACTOR, find_step_index
 
@@ -24,7 +23,6 @@ def _save_sharpness(data: SharpnessData, path: str):
     save_file({
         "basis": data.basis.contiguous(),
         "mean": data.mean.contiguous(),
-        "pc1_std": torch.tensor([data.pc1_std]),
         "sign": torch.tensor([data.sign]),
     }, path)
 
@@ -35,7 +33,6 @@ def _load_sharpness(path: str) -> SharpnessData:
     return SharpnessData(
         basis=d["basis"],
         mean=d["mean"],
-        pc1_std=float(d["pc1_std"].item()),
         sign=float(d["sign"].item()),
     )
 
@@ -102,7 +99,7 @@ def _downsample_mask(mask, h_len, w_len, device, dtype):
 def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
     """Build the post_cfg_function closure for sharpness intervention.
 
-    Simple and correct approach: patches_new = patches + delta * pc1_dir.
+    Simple and correct approach: patches_new = patches + edit_vec.
     Adding a vector along one direction automatically preserves all other
     dimensions (residual preservation by construction). No need for explicit
     projection/residual/reconstruction.
@@ -111,6 +108,12 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
     provided at calibration time), so pc1_dir is already orthogonal to color.
     At intervention time, we just add delta along that direction.
     """
+    # Precompute constant edit vector once (not per-step).
+    # Remove DC component from pc1_dir to prevent brightness shift.
+    pc1_dir = sharpness_data.basis[:, 0].clone()
+    pc1_dir = pc1_dir - pc1_dir.mean()
+    edit_vec = (strength * sharpness_data.sign) * pc1_dir  # [64], on CPU
+
     def post_cfg_fn(args):
         denoised = args["denoised"]  # [B, 16, H, W] in process_in space
         sigma = args["sigma"]
@@ -125,7 +128,8 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         device = denoised.device
         dtype = denoised.dtype
 
-        shd = sharpness_data.to(device, dtype)
+        # Move edit vector to device/dtype (short-circuits if already there)
+        ev = edit_vec.to(device=device, dtype=dtype)
 
         # Convert from process_in to raw VAE space
         raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
@@ -133,29 +137,14 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         # Patchify
         patches, h_len, w_len = patchify(raw)  # [B, L, 64]
 
-        # Sharpness edit: add delta along PC1 direction.
-        # pc1_dir is orthogonal to color (if calibrated with lcs_data).
-        # All other 63 dimensions are preserved because we only ADD along one direction.
-        #
-        # Scaling: basis vectors are unit norm, so strength directly controls the
-        # L2 magnitude of the edit per patch. No pc1_std multiplication — that
-        # value represents the spread across blur levels 0-16 during calibration
-        # and produces edits far too large for denoising.
-        delta = strength * shd.sign
-        pc1_dir = shd.basis[:, 0]  # [64], unit norm
-        # Remove DC component: ensure adding along pc1_dir doesn't shift
-        # the overall patch mean (which controls brightness).
-        # This is a single scalar removal, unlike per-channel removal which
-        # caused grid artifacts.
-        pc1_dir = pc1_dir - pc1_dir.mean()
-
+        # Apply sharpness edit
         if mask is not None:
             mask_flat = _downsample_mask(mask, h_len, w_len, device, dtype)
             if mask_flat.shape[1] != patches.shape[1]:
                 mask_flat = mask_flat[:, :patches.shape[1], :]
-            patches_new = patches + (mask_flat * delta) * pc1_dir
+            patches_new = patches + mask_flat * ev
         else:
-            patches_new = patches + delta * pc1_dir
+            patches_new = patches + ev
 
         # Unpatchify
         raw_new = unpatchify(patches_new, h_len, w_len)  # [B, 16, H, W]

@@ -17,12 +17,11 @@ class SharpnessData:
     """Calibration data for the sharpness subspace.
 
     Produced by PCA on FLUX VAE-encoded images at varying blur levels.
-    PC1 captures ~93% of sharpness/blur variance.
+    PC1 captures ~97% of sharpness/blur variance.
     """
 
     basis: torch.Tensor   # [64, K] PCA basis (columns), K typically 1-2
     mean: torch.Tensor    # [64] PCA mean (in color-removed space if lcs_data was used)
-    pc1_std: float        # Standard deviation along PC1 (for normalizing strength)
     sign: float           # +1 or -1: ensures positive strength = sharper
 
     def to(self, device, dtype=None):
@@ -33,7 +32,6 @@ class SharpnessData:
         return SharpnessData(
             basis=self.basis.to(**kw),
             mean=self.mean.to(**kw),
-            pc1_std=self.pc1_std,
             sign=self.sign,
         )
 
@@ -109,10 +107,8 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
     1. Generate num_samples random noise images (spatial detail needed for blur)
     2. For each blur level, apply Gaussian blur to the SAME images
     3. VAE encode → patchify → average patches → [64] vector
-    4. Optionally remove LCS color component (ensures sharpness PC1 is orthogonal to color)
     5. PCA on all vectors → extract PC1 (+ PC2)
     6. Determine sign: positive strength = sharper
-    7. Compute pc1_std from spread of PC1 scores
 
     Args:
         vae: ComfyUI VAE object
@@ -135,13 +131,13 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
     # Deterministic seed for reproducibility
     rng = torch.Generator().manual_seed(42)
 
-    # Step 1: Generate all base images upfront [num_samples, 3, H, W]
-    # Use GRAYSCALE noise (same value across RGB) so that blur affects all channels
-    # identically. RGB noise introduces inter-channel variance that PCA captures
-    # as a secondary component unrelated to sharpness.
+    # Step 1: Generate single-channel grayscale noise [num_samples, 1, H, W]
+    # Grayscale (same value across RGB) ensures blur affects all channels identically.
+    # RGB noise introduces inter-channel variance that PCA captures as a secondary
+    # component unrelated to sharpness.
+    # Keep as single-channel; expand to 3-channel per-batch to avoid 3x memory.
     print(f"[LCS Sharpness Calibration] Generating {num_samples} grayscale noise images...")
-    gray_noise = torch.rand(num_samples, 1, image_size, image_size, generator=rng)
-    base_images = gray_noise.expand(num_samples, 3, image_size, image_size).contiguous()
+    base_gray = torch.rand(num_samples, 1, image_size, image_size, generator=rng)
 
     # Step 2+3: For each blur level, apply blur to ALL base images, then encode
     vectors = []
@@ -153,13 +149,15 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
 
         for batch_start in range(0, num_samples, batch_size):
             batch_end = min(batch_start + batch_size, num_samples)
-            batch = base_images[batch_start:batch_end]  # [B, 3, H, W]
-            actual_batch = batch.shape[0]
+            # Blur single-channel, then expand to 3-channel for VAE
+            batch_gray = base_gray[batch_start:batch_end]  # [B, 1, H, W]
+            actual_batch = batch_gray.shape[0]
 
-            # Apply blur (no-op for sigma=0)
-            blurred = _apply_gaussian_blur(batch, blur_sigma)
+            # Apply blur on single channel (no-op for sigma=0)
+            blurred_gray = _apply_gaussian_blur(batch_gray, blur_sigma)
 
-            # Convert BCHW → BHWC for ComfyUI VAE
+            # Expand to 3-channel and convert BCHW → BHWC for ComfyUI VAE
+            blurred = blurred_gray.expand(actual_batch, 3, image_size, image_size)
             imgs_bhwc = blurred.permute(0, 2, 3, 1).contiguous().cpu()
 
             # VAE encode → [B, 16, H/8, W/8]
@@ -219,15 +217,10 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
     correlation = torch.corrcoef(torch.stack([pc1_scores, blur_labels_t]))[0, 1]
     sign = -1.0 if correlation > 0 else 1.0
     print(f"[LCS Sharpness Calibration] PC1-blur correlation: {correlation:.3f} → sign = {sign:+.0f}")
-
-    # Step 6: Compute pc1_std
-    pc1_std = float(pc1_scores.std())
-    print(f"[LCS Sharpness Calibration] PC1 std: {pc1_std:.4f}")
     print(f"[LCS Sharpness Calibration] Complete! Basis shape: {basis.shape}")
 
     return SharpnessData(
         basis=basis,
         mean=mean,
-        pc1_std=pc1_std,
         sign=sign,
     )
