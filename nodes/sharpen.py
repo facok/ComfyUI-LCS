@@ -48,8 +48,7 @@ class LCSSharpnessCalibrate(io.ComfyNode):
     Result is cached per-VAE fingerprint.
 
     When lcs_data is provided, the color component is removed during calibration,
-    ensuring the sharpness PC1 is orthogonal to the color subspace. This prevents
-    color shifts during sharpness intervention.
+    ensuring the sharpness PC1 is orthogonal to the color subspace.
     """
 
     @classmethod
@@ -101,12 +100,17 @@ def _downsample_mask(mask, h_len, w_len, device, dtype):
     return mask_resized.reshape(1, -1, 1)  # [1, L, 1]
 
 
-def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask, lcs_data=None):
+def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
     """Build the post_cfg_function closure for sharpness intervention.
 
-    Projects to sharpness subspace, shifts PC1, preserves residual (all other
-    dimensions including color). If lcs_data is provided (for calibration with
-    color removal), removes color component before projection.
+    Simple and correct approach: patches_new = patches + delta * pc1_dir.
+    Adding a vector along one direction automatically preserves all other
+    dimensions (residual preservation by construction). No need for explicit
+    projection/residual/reconstruction.
+
+    The sharpness basis is calibrated with LCS color removal (if lcs_data was
+    provided at calibration time), so pc1_dir is already orthogonal to color.
+    At intervention time, we just add delta along that direction.
     """
     def post_cfg_fn(args):
         denoised = args["denoised"]  # [B, 16, H, W] in process_in space
@@ -130,53 +134,20 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask, lc
         # Patchify
         patches, h_len, w_len = patchify(raw)  # [B, L, 64]
 
-        # If calibration used LCS color removal, we must remove color component
-        # before projecting onto sharpness basis
-        if lcs_data is not None:
-            lcs = lcs_data.to(device, dtype)
-            lcs_mean = lcs.mean
-            lcs_basis = lcs.basis
-            # Remove LCS color component: residual = patches - color_reconstruction
-            centered = patches - lcs_mean
-            lcs_coords = centered @ lcs_basis  # [B, L, 3]
-            color_reconstruction = lcs_coords @ lcs_basis.T + lcs_mean
-            patches_for_sharpness = patches - (color_reconstruction - lcs_mean)
-        else:
-            patches_for_sharpness = patches
-
-        # Project to sharpness subspace
-        projection = (patches_for_sharpness - shd.mean) @ shd.basis  # [B, L, K]
-
-        # Compute residual (all dimensions NOT in sharpness subspace)
-        # This is in the same space as patches_for_sharpness
-        reconstruction = projection @ shd.basis.T + shd.mean  # [B, L, 64]
-        residual = patches_for_sharpness - reconstruction  # [B, L, 64]
-
-        # Edit PC1: shift by strength * sign * pc1_std
+        # Sharpness edit: add delta along PC1 direction.
+        # pc1_dir is orthogonal to color (if calibrated with lcs_data),
+        # so this preserves color by construction.
+        # All other 63 dimensions are preserved because we only ADD along one direction.
         delta = strength * shd.sign * shd.pc1_std
-        new_projection = projection.clone()
-        new_projection[..., 0] = new_projection[..., 0] + delta
+        pc1_dir = shd.basis[:, 0]  # [64]
 
-        # Apply mask if provided
         if mask is not None:
             mask_flat = _downsample_mask(mask, h_len, w_len, device, dtype)
-            if mask_flat.shape[1] != new_projection.shape[1]:
-                mask_flat = mask_flat[:, :new_projection.shape[1], :]
-            # Blend: masked areas get intervention, unmasked keep original
-            new_projection = projection + mask_flat * (new_projection - projection)
-
-        # Reconstruct with residual preservation (in color-removed space)
-        patches_sharpness_new = new_projection @ shd.basis.T + shd.mean + residual  # [B, L, 64]
-
-        # Add back color component if it was removed
-        if lcs_data is not None:
-            # patches_new = patches_sharpness_new + (color_reconstruction - lcs_mean)
-            # But we need to preserve original color, not the one from patches_for_sharpness
-            # Actually: patches_sharpness_new is the sharpness-modified version in color-removed space
-            # We need to add back the original color component from the input patches
-            patches_new = patches_sharpness_new + (color_reconstruction - lcs_mean)
+            if mask_flat.shape[1] != patches.shape[1]:
+                mask_flat = mask_flat[:, :patches.shape[1], :]
+            patches_new = patches + (mask_flat * delta) * pc1_dir
         else:
-            patches_new = patches_sharpness_new
+            patches_new = patches + delta * pc1_dir
 
         # Unpatchify
         raw_new = unpatchify(patches_new, h_len, w_len)  # [B, 16, H, W]
@@ -190,12 +161,10 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask, lc
 class LCSSharpnessIntervene(io.ComfyNode):
     """Control sharpness during FLUX generation via the sharpness subspace.
 
-    Installs a post-CFG hook that projects to the sharpness subspace, shifts
-    PC1, and preserves the residual (all other latent dimensions including color).
+    Installs a post-CFG hook that adds a scaled shift along the sharpness
+    PC1 direction. When calibrated with lcs_data, the sharpness direction
+    is orthogonal to color, so color is preserved by construction.
     Positive strength = sharper, negative = blurrier.
-
-    IMPORTANT: If calibration used lcs_data (color-removed), you must connect
-    the same lcs_data here to ensure consistent color behavior.
     """
 
     @classmethod
@@ -216,8 +185,6 @@ class LCSSharpnessIntervene(io.ComfyNode):
                              tooltip="Last step to apply sharpness intervention"),
                 io.Mask.Input("mask", optional=True,
                               tooltip="Optional mask for localized sharpness control"),
-                LCS_DATA.Input("lcs_data", optional=True,
-                              tooltip="Required if calibration used lcs_data (for color-removed sharpness)"),
             ],
             outputs=[
                 io.Model.Output(display_name="model"),
@@ -226,10 +193,10 @@ class LCSSharpnessIntervene(io.ComfyNode):
 
     @classmethod
     def execute(cls, model, sharpness_data, strength, start_step, end_step,
-                mask=None, lcs_data=None) -> io.NodeOutput:
+                mask=None) -> io.NodeOutput:
         m = model.clone()
         # Skip hook when strength is zero (true no-op)
         if abs(strength) > 1e-6:
-            hook = _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask, lcs_data)
+            hook = _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask)
             m.set_model_sampler_post_cfg_function(hook)
         return io.NodeOutput(m)
