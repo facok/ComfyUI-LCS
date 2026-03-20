@@ -153,6 +153,8 @@ Calibration runs once per VAE and caches automatically. Subsequent runs load ins
 - **start_step / end_step**: Step range (default 5–15).
 - **mask**: Optional. Localized sharpness control.
 
+> **Tip for distilled models**: Step-distilled models (e.g., z-image-turbo) use far fewer steps, so intervention should start earlier — even from step 0.
+
 ## Tone Presets
 
 Select a preset — sliders update in real-time. Tweak after selecting for fine-tuning. Select **Custom** to set values manually.
