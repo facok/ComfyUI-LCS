@@ -95,9 +95,8 @@ def _downsample_mask(mask, h_len, w_len, device, dtype):
 def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
     """Build the post_cfg_function closure for sharpness intervention.
 
-    Algebraically simplified: adding delta along PC1 direction preserves all
-    other dimensions by construction, so no explicit projection/residual needed.
-    patches_new = patches + delta * pc1_direction
+    Projects to sharpness subspace, shifts PC1, preserves residual (all other
+    dimensions including color). This ensures sharpness edits don't affect color.
     """
     def post_cfg_fn(args):
         denoised = args["denoised"]  # [B, 16, H, W] in process_in space
@@ -114,6 +113,8 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         dtype = denoised.dtype
 
         shd = sharpness_data.to(device, dtype)
+        B_mat = shd.basis  # [64, K]
+        mu = shd.mean      # [64]
 
         # Convert from process_in to raw VAE space
         raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
@@ -121,20 +122,28 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         # Patchify
         patches, h_len, w_len = patchify(raw)  # [B, L, 64]
 
-        # Sharpness edit: add delta along PC1 direction.
-        # Since we only shift along one basis vector, the residual (all other
-        # dimensions) is preserved automatically — no need to project, compute
-        # residual, and reconstruct.
-        delta = strength * shd.sign * shd.pc1_std
-        pc1_dir = shd.basis[:, 0]  # [64]
+        # Project to sharpness subspace
+        projection = (patches - mu) @ B_mat  # [B, L, K]
 
+        # Compute residual (all dimensions NOT in sharpness subspace)
+        reconstruction = projection @ B_mat.T + mu  # [B, L, 64]
+        residual = patches - reconstruction  # [B, L, 64]
+
+        # Edit PC1: shift by strength * sign * pc1_std
+        delta = strength * shd.sign * shd.pc1_std
+        new_projection = projection.clone()
+        new_projection[..., 0] = new_projection[..., 0] + delta
+
+        # Apply mask if provided
         if mask is not None:
             mask_flat = _downsample_mask(mask, h_len, w_len, device, dtype)
-            if mask_flat.shape[1] != patches.shape[1]:
-                mask_flat = mask_flat[:, :patches.shape[1], :]
-            patches_new = patches + (mask_flat * delta) * pc1_dir
-        else:
-            patches_new = patches + delta * pc1_dir
+            if mask_flat.shape[1] != new_projection.shape[1]:
+                mask_flat = mask_flat[:, :new_projection.shape[1], :]
+            # Blend: masked areas get intervention, unmasked keep original
+            new_projection = projection + mask_flat * (new_projection - projection)
+
+        # Reconstruct with residual preservation
+        patches_new = new_projection @ B_mat.T + mu + residual  # [B, L, 64]
 
         # Unpatchify
         raw_new = unpatchify(patches_new, h_len, w_len)  # [B, 16, H, W]
@@ -148,8 +157,8 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
 class LCSSharpnessIntervene(io.ComfyNode):
     """Control sharpness during FLUX generation via the sharpness subspace.
 
-    Installs a post-CFG hook that adds a scaled shift along the sharpness
-    PC1 direction, preserving all other latent structure by construction.
+    Installs a post-CFG hook that projects to the sharpness subspace, shifts
+    PC1, and preserves the residual (all other latent dimensions including color).
     Positive strength = sharper, negative = blurrier.
     """
 
