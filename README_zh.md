@@ -1,6 +1,6 @@
 # ComfyUI-LCS
 
-基于**潜在颜色子空间**（Latent Color Subspace）的免训练颜色控制。
+基于**潜在颜色子空间**（Latent Color Subspace）的免训练颜色控制，以及基于发现的**锐度子空间**的锐度控制。
 
 > **注意：** 本项目为非官方社区实现。官方代码见 [ExplainableML/LCS](https://github.com/ExplainableML/LCS)。
 
@@ -40,7 +40,8 @@ LCS 按 VAE 校准，理论上适用于任何使用兼容 VAE 架构的模型。
 - **颜色引导** — 将颜色推向任意目标色
 - **批量多色** — 为批次中每张图像指定不同颜色
 - **色调调整** — 对比度、亮度、饱和度、色温，支持一键预设
-- **局部控制** — 可选遮罩，实现区域性颜色变化
+- **锐度控制** — 在生成过程中增强或减弱锐度，基于发现的锐度子空间（PC1 解释 ~97% 方差）
+- **局部控制** — 可选遮罩，实现区域性变化
 - **潜在颜色预览** — 无需 VAE 解码即可可视化颜色结构
 - **步骤观察器** — 保存每步颜色预览，用于调试
 
@@ -82,6 +83,19 @@ LCS Load Data → LCS Tone Adjust → KSampler
 
 ![3d3c82eb0e89ed1608e40ac7a8cc3408](https://github.com/user-attachments/assets/62868e2d-0275-4801-a9bd-606bfea3ce2f)
 
+### 锐度控制
+
+```
+LCS Load Data ──→ LCS Sharpness Calibrate → LCS Sharpness Intervene → KSampler
+                        ↑ lcs_data
+```
+
+1. **LCS Sharpness Calibrate** — 连接 VAE（首次运行自动校准并缓存）。可选连接 `lcs_data`（来自 LCS Load Data），确保锐度编辑不影响颜色。
+2. **LCS Sharpness Intervene** — 连接 MODEL 和 SHARPNESS_DATA，设置强度
+   - 正值 → 更锐利
+   - 负值 → 更模糊
+   - 0 → 无变化
+
 ### 批量多色生成
 
 ```
@@ -98,7 +112,8 @@ LCS Load Data → LCS Color Batch → KSampler
 
 | 节点 | 说明 |
 |------|------|
-| **LCS Load Data** | 自动校准并按 VAE 缓存 LCS 数据。通过 VAE 权重指纹自动管理缓存——连接 VAE 即可。 |
+| **LCS Load Data** | 自动校准并按 VAE 缓存 LCS 颜色数据。通过 VAE 权重指纹自动管理缓存。 |
+| **LCS Sharpness Calibrate** | 通过模糊刺激 PCA 发现锐度子空间。可选连接 `lcs_data` 使锐度正交于颜色。 |
 
 每个 VAE 只需校准一次，结果自动缓存，后续运行瞬时加载。
 
@@ -109,6 +124,7 @@ LCS Load Data → LCS Color Batch → KSampler
 | **LCS Color Intervene** | 将颜色引导至目标色。支持 Type I（LCS 平移）、Type II（HSL 偏移）或插值模式。 |
 | **LCS Color Batch** | 每个批次项施加不同目标颜色。输出 `batch_size` 可连接 EmptyLatentImage。 |
 | **LCS Tone Adjust** | 对比度、亮度、饱和度、色温调整。预设下拉菜单，滑条实时同步。 |
+| **LCS Sharpness Intervene** | 在生成过程中控制锐度。正值 = 更锐利，负值 = 更模糊。 |
 
 ### 观察
 
@@ -127,9 +143,15 @@ LCS Load Data → LCS Color Batch → KSampler
 
 ## 关键参数
 
+### 颜色干预
 - **strength**（0.0–2.0）：干预强度。1.0 = 完整干预，0.0 = 无干预。
 - **start_step / end_step**：干预步骤范围。论文最优：50 步中的第 8–10 步。
 - **mask**：可选。下采样至 patch 网格分辨率，用于局部控制。
+
+### 锐度干预
+- **strength**（-5.0–5.0）：正值 = 更锐利，负值 = 更模糊，0 = 无变化。
+- **start_step / end_step**：干预步骤范围（默认 5–15）。
+- **mask**：可选。用于局部锐度控制。
 
 ## 色调预设
 
@@ -150,6 +172,8 @@ LCS Load Data → LCS Color Batch → KSampler
 
 ## 工作原理
 
+### 颜色（LCS）
+
 1. **投影** — 将去噪预测转换到 64D patch 空间，投影到 3D LCS 基底
 2. **分解** — 将 3D 颜色坐标与 61D 结构残差分离
 3. **归一化** — 使用学习的 alpha/beta 统计量变换至参考时间步（t=50）
@@ -158,6 +182,13 @@ LCS Load Data → LCS Color Batch → KSampler
 
 61D 残差（结构、纹理、细节）始终不被修改——只有 3D 颜色子空间会被改变。
 
+### 锐度
+
+锐度存在于与颜色正交的独立子空间中：
+
+1. **校准** — 生成灰度噪声图像，应用多级高斯模糊，VAE 编码后对去除颜色分量的 patch 向量做 PCA。PC1 捕获 ~97% 的锐度方差。
+2. **干预** — 在每个 patch 上沿 `strength * pc1_direction` 方向添加偏移。由于 pc1_direction 与颜色正交（校准时已移除 LCS 分量）且无直流分量（PCA 前做了逐向量零均值化），因此只改变空间频率内容，不影响颜色或亮度。
+
 ## 文件结构
 
 ```
@@ -165,16 +196,19 @@ ComfyUI-LCS/
 ├── __init__.py           # 入口（V3 + V2 兼容）
 ├── requirements.txt
 ├── core/
-│   ├── calibration.py    # PCA 校准流程
+│   ├── calibration.py    # PCA 校准流程（颜色）
 │   ├── color_space.py    # 双锥 LCS ↔ HSL 映射
 │   ├── defaults.py       # 论文中的 Alpha/beta 表
 │   ├── lcs_data.py       # LCSData 数据类
 │   ├── patchify.py       # Patch ↔ 潜在空间转换
+│   ├── sampling.py       # 共享常量和步骤工具
+│   ├── sharpness.py      # 锐度子空间校准
 │   └── timestep.py       # Sigma/时间步工具
 ├── nodes/
 │   ├── calibrate.py      # LCSLoadData（自动校准 + 缓存）
 │   ├── intervene.py      # LCSColorIntervene, LCSColorBatch, LCSToneAdjust
-│   └── observe.py        # LCSPreviewColors, LCSStepObserver
+│   ├── observe.py        # LCSPreviewColors, LCSStepObserver
+│   └── sharpen.py        # LCSSharpnessCalibrate, LCSSharpnessIntervene
 ├── data/                 # 缓存的校准文件
 └── web/js/
     └── tone_preset.js    # 前端预设同步
