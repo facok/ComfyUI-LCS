@@ -144,6 +144,11 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         # and produces edits far too large for denoising.
         delta = strength * shd.sign
         pc1_dir = shd.basis[:, 0]  # [64], unit norm
+        # Remove DC component: ensure adding along pc1_dir doesn't shift
+        # the overall patch mean (which controls brightness).
+        # This is a single scalar removal, unlike per-channel removal which
+        # caused grid artifacts.
+        pc1_dir = pc1_dir - pc1_dir.mean()
 
         if mask is not None:
             mask_flat = _downsample_mask(mask, h_len, w_len, device, dtype)
