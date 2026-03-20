@@ -101,7 +101,7 @@ def _apply_gaussian_blur(images: torch.Tensor, blur_sigma: float) -> torch.Tenso
 
 
 def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
-                        blur_levels: Tuple[float, ...] = (0, 1, 2, 4, 8, 16),
+                        blur_levels: Tuple[float, ...] = (0, 0.5, 1, 2, 4, 8),
                         batch_size: int = 8,
                         lcs_data: LCSData = None) -> SharpnessData:
     """Compute sharpness subspace data (PCA basis, mean, sign) from FLUX VAE.
