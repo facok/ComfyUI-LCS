@@ -95,7 +95,7 @@ LCS Load Data ──→ LCS Sharpness Calibrate → LCS Sharpness Intervene → 
    - Positive strength → sharper
    - Negative strength → blurrier
    - 0 → no change
-
+![89814728](https://github.com/user-attachments/assets/62f036e9-0bea-4cc0-9220-af4c2fb8fa76)
 ### Multi-Color Batch
 
 ```
