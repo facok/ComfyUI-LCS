@@ -1,14 +1,18 @@
-"""Patchify/unpatchify for FLUX latent tensors (patch_size=2, auto-detect channels)."""
+"""Patchify/unpatchify for FLUX-family latent tensors (patch_size=2, auto-detect channels)."""
 
 from einops import rearrange
 
 
 def patchify(x):
-    """Convert latent [B, C, H, W] → patch sequence [B, L, C*4].
+    """Convert latent [B, C, H, W] or [B, C, T, H, W] → patch sequence [B, L, C*4].
 
+    For video VAEs (5D input), squeezes the temporal dimension (T must be 1).
     L = (H/2) * (W/2), d = C * 2 * 2.
     Returns (patches, h_len, w_len) where h_len=H/2, w_len=W/2.
     """
+    if x.ndim == 5:
+        # Video VAE: [B, C, T, H, W] → squeeze T
+        x = x.squeeze(2)
     B, C, H, W = x.shape
     h_len = H // 2
     w_len = W // 2
