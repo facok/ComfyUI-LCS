@@ -159,7 +159,7 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         modified = raw_to_denoised(raw_new, model).to(dtype)
 
         # Repack if LTXAV
-        return repack_video_if_needed(modified, denoised, pack_info)
+        return repack_video_if_needed(modified, pack_info)
 
     return post_cfg_fn
 

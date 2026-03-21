@@ -1,10 +1,7 @@
 """Shared sampling utilities for LCS intervention hooks."""
 
+import comfy.utils
 import torch
-
-# Legacy FLUX constants — kept for backward compatibility with observe.py preview
-SCALE_FACTOR = 0.3611
-SHIFT_FACTOR = 0.1159
 
 
 def find_step_index(sigma, sigmas):
@@ -51,24 +48,20 @@ def unpack_video_if_needed(denoised, args):
         cond = args.get("cond")
         latent_shapes = _extract_latent_shapes(cond)
         if latent_shapes is not None and len(latent_shapes) > 1:
-            import comfy.utils
             tensors = comfy.utils.unpack_latents(denoised, latent_shapes)
             # tensors[0] = video [B, 128, F, H, W], tensors[1] = audio [B, ch, T, freq]
-            return tensors[0], {"packed": True, "latent_shapes": latent_shapes,
-                                "other_tensors": tensors[1:], "original": denoised}
+            return tensors[0], {"other_tensors": tensors[1:]}
     return denoised, None
 
 
-def repack_video_if_needed(modified, original_denoised, pack_info):
+def repack_video_if_needed(modified, pack_info):
     """Repack video tensor back into LTXAV packed format if it was unpacked.
 
     modified: the video tensor after intervention [B, 128, F, H, W]
-    original_denoised: the original packed tensor (for audio portion)
     pack_info: from unpack_video_if_needed
     """
     if pack_info is None:
         return modified
-    import comfy.utils
     all_tensors = [modified] + pack_info["other_tensors"]
     packed, _ = comfy.utils.pack_latents(all_tensors)
     return packed

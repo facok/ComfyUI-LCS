@@ -167,7 +167,7 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
         modified = raw_to_denoised(raw_new, model).to(dtype)
 
         # Repack if LTXAV
-        return repack_video_if_needed(modified, denoised, pack_info)
+        return repack_video_if_needed(modified, pack_info)
 
     return post_cfg_fn
 
@@ -424,7 +424,7 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
         modified = raw_to_denoised(raw_new, model).to(dtype)
 
         # Repack if LTXAV
-        return repack_video_if_needed(modified, denoised, pack_info)
+        return repack_video_if_needed(modified, pack_info)
 
     return post_cfg_fn
 
