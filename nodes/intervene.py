@@ -1,12 +1,11 @@
 """Intervention nodes: LCSColorIntervene, LCSColorBatch, and LCSToneAdjust."""
 
 import torch
-import torch.nn.functional as F
 from comfy_api.latest import io
 
 from ..core.lcs_data import LCSData
 from ..core.patchify import patchify, unpatchify
-from ..core.sampling import find_step_index, denoised_to_raw, raw_to_denoised, unpack_video_if_needed, repack_video_if_needed
+from ..core.sampling import find_step_index, denoised_to_raw, raw_to_denoised, unpack_video_if_needed, repack_video_if_needed, downsample_mask
 from ..core.timestep import get_alpha_beta, get_alpha_beta_t50, normalize_to_t50, denormalize_from_t50
 from ..core.color_space import hex_to_hsl, encode_hsl_to_lcs, decode_lcs_to_hsl, _hue_lerp
 
@@ -134,21 +133,7 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
 
         # Apply mask if provided
         if mask is not None:
-            mask_dev = mask.to(device=device, dtype=dtype)
-            if mask_dev.ndim == 3:
-                mask_dev = mask_dev[:1]  # Use first mask for all batch items
-            # Downsample mask to patch grid: → [B, 1, h_len, w_len]
-            if mask_dev.ndim == 2:
-                mask_4d = mask_dev.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
-            elif mask_dev.ndim == 3:
-                mask_4d = mask_dev.unsqueeze(1)  # [B, 1, H, W]
-            else:
-                mask_4d = mask_dev  # assume already 4D
-            mask_resized = F.interpolate(
-                mask_4d, size=(h_len, w_len), mode="bilinear", align_corners=False
-            )
-            # Flatten to [1, L, 1]
-            mask_flat = mask_resized.reshape(1, -1, 1)
+            mask_flat = downsample_mask(mask, h_len, w_len, device, dtype)
             if mask_flat.shape[1] != new_c_norm.shape[1]:
                 mask_flat = mask_flat[:, :new_c_norm.shape[1], :]
             # Blend: masked areas get intervention, unmasked keep original
@@ -394,19 +379,7 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
 
         # Apply mask if provided
         if mask is not None:
-            mask_dev = mask.to(device=device, dtype=dtype)
-            if mask_dev.ndim == 3:
-                mask_dev = mask_dev[:1]
-            if mask_dev.ndim == 2:
-                mask_4d = mask_dev.unsqueeze(0).unsqueeze(0)
-            elif mask_dev.ndim == 3:
-                mask_4d = mask_dev.unsqueeze(1)
-            else:
-                mask_4d = mask_dev
-            mask_resized = F.interpolate(
-                mask_4d, size=(h_len, w_len), mode="bilinear", align_corners=False
-            )
-            mask_flat = mask_resized.reshape(1, -1, 1)
+            mask_flat = downsample_mask(mask, h_len, w_len, device, dtype)
             if mask_flat.shape[1] != new_c_norm.shape[1]:
                 mask_flat = mask_flat[:, :new_c_norm.shape[1], :]
             new_c_norm = c_norm + mask_flat * (new_c_norm - c_norm)

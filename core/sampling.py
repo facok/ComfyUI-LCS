@@ -2,6 +2,7 @@
 
 import comfy.utils
 import torch
+import torch.nn.functional as F
 
 
 def find_step_index(sigma, sigmas):
@@ -65,6 +66,23 @@ def repack_video_if_needed(modified, pack_info):
     all_tensors = [modified] + pack_info["other_tensors"]
     packed, _ = comfy.utils.pack_latents(all_tensors)
     return packed
+
+
+def downsample_mask(mask, h_len, w_len, device, dtype):
+    """Downsample a mask to patch grid and flatten to [1, L, 1]."""
+    mask_dev = mask.to(device=device, dtype=dtype)
+    if mask_dev.ndim == 3:
+        mask_dev = mask_dev[:1]
+    if mask_dev.ndim == 2:
+        mask_4d = mask_dev.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+    elif mask_dev.ndim == 3:
+        mask_4d = mask_dev.unsqueeze(1)  # [B, 1, H, W]
+    else:
+        mask_4d = mask_dev
+    mask_resized = F.interpolate(
+        mask_4d, size=(h_len, w_len), mode="bilinear", align_corners=False
+    )
+    return mask_resized.reshape(1, -1, 1)  # [1, L, 1]
 
 
 def _extract_latent_shapes(cond):

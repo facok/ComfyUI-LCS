@@ -3,14 +3,13 @@
 import os
 
 import torch
-import torch.nn.functional as F
 from comfy_api.latest import io
 from safetensors.torch import save_file, load_file
 
 from ..core.sharpness import SharpnessData, calibrate_sharpness
 from ..core.calibration import vae_fingerprint
 from ..core.patchify import patchify, unpatchify
-from ..core.sampling import find_step_index, denoised_to_raw, raw_to_denoised, unpack_video_if_needed, repack_video_if_needed
+from ..core.sampling import find_step_index, denoised_to_raw, raw_to_denoised, unpack_video_if_needed, repack_video_if_needed, downsample_mask
 
 SHARPNESS_DATA = io.Custom("SHARPNESS_DATA")
 LCS_DATA = io.Custom("LCS_DATA")
@@ -79,23 +78,6 @@ class LCSSharpnessCalibrate(io.ComfyNode):
         return io.NodeOutput(data)
 
 
-def _downsample_mask(mask, h_len, w_len, device, dtype):
-    """Downsample a mask to patch grid and flatten to [1, L, 1]."""
-    mask_dev = mask.to(device=device, dtype=dtype)
-    if mask_dev.ndim == 3:
-        mask_dev = mask_dev[:1]
-    if mask_dev.ndim == 2:
-        mask_4d = mask_dev.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
-    elif mask_dev.ndim == 3:
-        mask_4d = mask_dev.unsqueeze(1)  # [B, 1, H, W]
-    else:
-        mask_4d = mask_dev
-    mask_resized = F.interpolate(
-        mask_4d, size=(h_len, w_len), mode="bilinear", align_corners=False
-    )
-    return mask_resized.reshape(1, -1, 1)  # [1, L, 1]
-
-
 def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
     """Build the post_cfg_function closure for sharpness intervention.
 
@@ -145,7 +127,7 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
 
         # Apply sharpness edit
         if mask is not None:
-            mask_flat = _downsample_mask(mask, h_len, w_len, device, dtype)
+            mask_flat = downsample_mask(mask, h_len, w_len, device, dtype)
             if mask_flat.shape[1] != patches.shape[1]:
                 mask_flat = mask_flat[:, :patches.shape[1], :]
             patches_new = patches + mask_flat * ev
