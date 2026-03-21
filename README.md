@@ -30,8 +30,10 @@ The core insight: color and structure are **orthogonal** in the latent patch spa
 | Model | Status |
 |-------|--------|
 | FLUX | Tested |
+| FLUX2.klein | Tested |
 | z-image | Tested |
 | z-image-turbo | Tested |
+
 
 LCS calibrates per-VAE, so it should work with any model using a compatible VAE. Feel free to report results with other models.
 
@@ -82,6 +84,7 @@ LCS Load Data → LCS Tone Adjust → KSampler
 2. Select a preset (e.g., "Cinematic") or adjust sliders manually
 
 ![3d3c82eb0e89ed1608e40ac7a8cc3408](https://github.com/user-attachments/assets/62868e2d-0275-4801-a9bd-606bfea3ce2f)
+![42541357](https://github.com/user-attachments/assets/fe22f09e-98ac-4281-ae40-f58232c7700f)
 
 ### Sharpness Control
 
