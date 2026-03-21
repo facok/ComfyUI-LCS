@@ -49,7 +49,7 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
         raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
 
         # Patchify
-        patches, h_len, w_len = patchify(raw)  # [B, L, 64]
+        patches, h_len, w_len, extra_shape = patchify(raw)
 
         # Project to LCS
         projection = (patches - mu) @ B_mat  # [B, L, 3]
@@ -155,7 +155,7 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
         patches_new = new_projection @ B_mat.T + mu + residual  # [B, L, 64]
 
         # Unpatchify
-        raw_new = unpatchify(patches_new, h_len, w_len)  # [B, 16, H, W]
+        raw_new = unpatchify(patches_new, h_len, w_len, extra_shape)
 
         # Convert back to process_in space
         modified = (raw_new - SHIFT_FACTOR) * SCALE_FACTOR
@@ -330,7 +330,7 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
         raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
 
         # Patchify
-        patches, h_len, w_len = patchify(raw)  # [B, L, 64]
+        patches, h_len, w_len, extra_shape = patchify(raw)
 
         # Project to LCS
         projection = (patches - mu) @ B_mat  # [B, L, 3]
@@ -405,7 +405,7 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
         patches_new = new_projection @ B_mat.T + mu + residual  # [B, L, 64]
 
         # Unpatchify
-        raw_new = unpatchify(patches_new, h_len, w_len)  # [B, 16, H, W]
+        raw_new = unpatchify(patches_new, h_len, w_len, extra_shape)
 
         # Convert back to process_in space
         modified = (raw_new - SHIFT_FACTOR) * SCALE_FACTOR

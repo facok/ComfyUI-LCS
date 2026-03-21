@@ -31,7 +31,7 @@ def _latent_to_color_preview(samples, lcs_data, sigma, upscale=8):
     ld = lcs_data.to(device, dtype)
 
     raw = samples / SCALE_FACTOR + SHIFT_FACTOR
-    patches, h_len, w_len = patchify(raw)
+    patches, h_len, w_len, _ = patchify(raw)
     projection = (patches - ld.mean) @ ld.basis
 
     alpha_t, beta_t = get_alpha_beta(sigma, device=device)

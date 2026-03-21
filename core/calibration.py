@@ -90,7 +90,7 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
         latent = vae.encode(imgs[:, :, :, :3])
 
         # Patchify → [B', L, D]
-        patches, _, _ = patchify(latent)
+        patches, _, _, _ = patchify(latent)
 
         # Average across patches → [B', D]
         avg = patches.mean(dim=1).cpu()
@@ -104,7 +104,7 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
             for k in range(1, actual_batch):
                 single = imgs[k:k+1, :, :, :3]
                 lat = vae.encode(single)
-                p, _, _ = patchify(lat)
+                p, _, _, _ = patchify(lat)
                 vectors.append(p.mean(dim=1).cpu().squeeze(0))
 
         pbar.update(actual_batch)
@@ -137,7 +137,7 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
         img[0, :, :, 1] = g
         img[0, :, :, 2] = b
         latent = vae.encode(img[:, :, :, :3])
-        patches, _, _ = patchify(latent)
+        patches, _, _, _ = patchify(latent)
         avg = patches.mean(dim=1).cpu().squeeze(0)  # [64]
         # Project to LCS
         lcs_coord = (avg - mean) @ basis  # [3]

@@ -162,7 +162,7 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
 
             # VAE encode — try batch first, fall back to per-image for video VAEs
             latent = vae.encode(imgs_bhwc)
-            patches, _, _ = patchify(latent)
+            patches, _, _, _ = patchify(latent)
             avg = patches.mean(dim=1).cpu()
 
             if avg.shape[0] == actual_batch:
@@ -176,7 +176,7 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
                 for k in range(1, actual_batch):
                     single = imgs_bhwc[k:k+1]
                     lat = vae.encode(single)
-                    p, _, _ = patchify(lat)
+                    p, _, _, _ = patchify(lat)
                     vectors.append(p.mean(dim=1).cpu().squeeze(0))
                     blur_labels.append(blur_sigma)
 

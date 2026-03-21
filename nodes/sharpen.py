@@ -135,7 +135,7 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
 
         # Patchify
-        patches, h_len, w_len = patchify(raw)  # [B, L, 64]
+        patches, h_len, w_len, extra_shape = patchify(raw)
 
         # Apply sharpness edit
         if mask is not None:
@@ -147,7 +147,7 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
             patches_new = patches + ev
 
         # Unpatchify
-        raw_new = unpatchify(patches_new, h_len, w_len)  # [B, 16, H, W]
+        raw_new = unpatchify(patches_new, h_len, w_len, extra_shape)
 
         # Convert back to process_in space
         return ((raw_new - SHIFT_FACTOR) * SCALE_FACTOR).to(dtype)
