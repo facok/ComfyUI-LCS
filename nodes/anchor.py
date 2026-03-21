@@ -76,7 +76,8 @@ def _build_adaptive_anchor_fn(lcs_data, mode, intensity, mask,
         "r_ema": None,
         "c_ema": None,
         "prev_c_mean": None,
-        "drift_samples": [],
+        "drift_sum": 0.0,
+        "drift_count": 0,
         "auto_intensity_val": None,
     }
 
@@ -148,28 +149,36 @@ def _build_adaptive_anchor_fn(lcs_data, mode, intensity, mask,
             c_mean_now = c_norm.detach().mean(dim=1, keepdim=True)
             if auto_intensity and state["prev_c_mean"] is not None:
                 drift = (c_mean_now - state["prev_c_mean"]).abs().mean().item()
-                state["drift_samples"].append(drift)
+                state["drift_sum"] += drift
+                state["drift_count"] += 1
             state["prev_c_mean"] = c_mean_now
             return denoised
 
         # --- Correct phase ---
-        # Auto-intensity: compute on first correction step, cache for rest
+        # Compute mode-specific target first (reused for auto-intensity drift measurement)
+        if mode == "smooth":
+            sigma_s, sigma_c = estimate_bilateral_params(c_norm, h_len, w_len)
+            c_filtered = bilateral_filter_lcs(c_norm, h_len, w_len, sigma_s, sigma_c)
+        elif mode == "reference":
+            c_ref_dev = c_ref.to(device=device, dtype=dtype)
+            r_ref_dev = r_ref.to(device=device, dtype=dtype)
+            if ref_h != h_len or ref_w != w_len:
+                c_ref_resized = _resize_color_field(c_ref_dev, ref_h, ref_w, h_len, w_len)
+                r_ref_resized = compute_local_relationships(c_ref_resized, h_len, w_len)
+            else:
+                c_ref_resized = c_ref_dev
+                r_ref_resized = r_ref_dev
+
+        # Auto-intensity: measure drift on first correction step, cache for rest
         effective_intensity = intensity
         if auto_intensity:
             if state["auto_intensity_val"] is None:
-                if mode == "self_anchor" and state["drift_samples"]:
-                    drift_signal = sum(state["drift_samples"]) / len(state["drift_samples"])
+                if mode == "self_anchor" and state["drift_count"] > 0:
+                    drift_signal = state["drift_sum"] / state["drift_count"]
                 elif mode == "reference":
-                    c_ref_dev = c_ref.to(device=device, dtype=dtype)
-                    if ref_h != h_len or ref_w != w_len:
-                        c_ref_meas = _resize_color_field(c_ref_dev, ref_h, ref_w, h_len, w_len)
-                    else:
-                        c_ref_meas = c_ref_dev
-                    drift_signal = (c_norm - c_ref_meas).abs().mean().item()
+                    drift_signal = (c_norm - c_ref_resized).abs().mean().item()
                 elif mode == "smooth":
-                    sigma_s, sigma_c = estimate_bilateral_params(c_norm, h_len, w_len)
-                    c_filt = bilateral_filter_lcs(c_norm, h_len, w_len, sigma_s, sigma_c)
-                    drift_signal = (c_filt - c_norm).abs().mean().item()
+                    drift_signal = (c_filtered - c_norm).abs().mean().item()
                 else:
                     drift_signal = 0.2  # fallback
                 state["auto_intensity_val"] = estimate_intensity(drift_signal)
@@ -190,22 +199,11 @@ def _build_adaptive_anchor_fn(lcs_data, mode, intensity, mask,
             delta = (c_mean_now - state["prev_c_mean"]).abs().mean().item()
             step_strength *= min(delta / 0.1, 1.0)
 
-        # Mode-specific correction
+        # Mode-specific correction (reuses targets computed above)
         if mode == "smooth":
-            sigma_s, sigma_c = estimate_bilateral_params(c_norm, h_len, w_len)
-            c_filtered = bilateral_filter_lcs(c_norm, h_len, w_len, sigma_s, sigma_c)
             new_c_norm = c_norm + step_strength * (c_filtered - c_norm)
 
         elif mode == "reference":
-            c_ref_dev = c_ref.to(device=device, dtype=dtype)
-            r_ref_dev = r_ref.to(device=device, dtype=dtype)
-            if ref_h != h_len or ref_w != w_len:
-                c_ref_resized = _resize_color_field(c_ref_dev, ref_h, ref_w, h_len, w_len)
-                r_ref_resized = compute_local_relationships(c_ref_resized, h_len, w_len)
-            else:
-                c_ref_resized = c_ref_dev
-                r_ref_resized = r_ref_dev
-
             B_size = c_norm.shape[0]
             c_ref_exp = c_ref_resized.expand(B_size, -1, -1)
             r_ref_exp = r_ref_resized.expand(B_size, -1, -1)
