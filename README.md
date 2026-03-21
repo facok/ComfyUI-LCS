@@ -34,6 +34,7 @@ The core insight: color and structure are **orthogonal** in the latent patch spa
 | z-image | Tested |
 | z-image-turbo | Tested |
 | Wan (qwen-image) | Tested |
+| LTX2.3 | Tested |
 
 
 LCS calibrates per-VAE, so it should work with any model using a compatible VAE. Feel free to report results with other models.
