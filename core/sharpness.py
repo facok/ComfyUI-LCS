@@ -160,19 +160,27 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
             blurred = blurred_gray.expand(actual_batch, 3, image_size, image_size)
             imgs_bhwc = blurred.permute(0, 2, 3, 1).contiguous().cpu()
 
-            # VAE encode → [B, 16, H/8, W/8]
+            # VAE encode — try batch first, fall back to per-image for video VAEs
             latent = vae.encode(imgs_bhwc)
-
-            # Patchify → [B', L, D], average across patches → [B', D]
-            # B' may differ from actual_batch for video VAEs
             patches, _, _ = patchify(latent)
             avg = patches.mean(dim=1).cpu()
 
-            encoded_count = avg.shape[0]
-            vectors.extend(avg.unbind(0))
-            blur_labels.extend([blur_sigma] * encoded_count)
+            if avg.shape[0] == actual_batch:
+                # Normal VAE: batch encode worked
+                vectors.extend(avg.unbind(0))
+                blur_labels.extend([blur_sigma] * actual_batch)
+            else:
+                # Video VAE: batch not supported, encode one by one
+                vectors.extend(avg.unbind(0))
+                blur_labels.extend([blur_sigma] * avg.shape[0])
+                for k in range(1, actual_batch):
+                    single = imgs_bhwc[k:k+1]
+                    lat = vae.encode(single)
+                    p, _, _ = patchify(lat)
+                    vectors.append(p.mean(dim=1).cpu().squeeze(0))
+                    blur_labels.append(blur_sigma)
 
-            pbar.update(encoded_count)
+            pbar.update(actual_batch)
 
     # Stack all vectors: [N, 64]
     X = torch.stack(vectors, dim=0).float()
