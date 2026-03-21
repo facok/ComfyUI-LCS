@@ -4,18 +4,21 @@ from einops import rearrange
 
 
 def patchify(x):
-    """Convert latent [B, C, H, W] or [B, C, T, H, W] → patch sequence [B, L, C*4].
+    """Convert latent [C, H, W], [B, C, H, W], or [B, C, T, H, W] → patch sequence [B, L, C*4].
 
-    For video VAEs (5D input with T frames), merges T into the batch dimension
-    so all frames are patchified together. The original shape is returned as
-    extra_shape for unpatchify to restore.
+    Handles three input formats:
+    - 3D [C, H, W]: adds batch dim, extra_shape="unbatched"
+    - 4D [B, C, H, W]: standard path, extra_shape=None
+    - 5D [B, C, T, H, W]: video VAE, merges T into batch, extra_shape=(B, C, T)
 
     L = (H/2) * (W/2), d = C * 2 * 2.
-    Returns (patches, h_len, w_len, extra_shape) where extra_shape is None for 4D
-    or (B_orig, C, T) for 5D.
     """
     extra_shape = None
-    if x.ndim == 5:
+    if x.ndim == 3:
+        # No batch dimension (e.g. LTXAV): [C, H, W] → [1, C, H, W]
+        extra_shape = "unbatched"
+        x = x.unsqueeze(0)
+    elif x.ndim == 5:
         B_orig, C, T, H, W = x.shape
         extra_shape = (B_orig, C, T)
         # Merge B and T: [B*T, C, H, W]
@@ -28,16 +31,19 @@ def patchify(x):
 
 
 def unpatchify(patches, h_len, w_len, extra_shape=None):
-    """Convert patch sequence [B, L, C*4] → latent [B, C, H, W] or [B, C, T, H, W].
+    """Convert patch sequence [B, L, C*4] → latent, restoring original shape.
 
     Auto-detects channel count from patch dimension: C = D / 4.
-    If extra_shape is provided, restores the 5D video format.
+    Restores 3D/5D format based on extra_shape from patchify.
     """
     D = patches.shape[-1]
     C = D // 4  # patch_size=2×2=4
     x = rearrange(patches, "b (h w) (c ph pw) -> b c (h ph) (w pw)",
                   h=h_len, w=w_len, c=C, ph=2, pw=2)
-    if extra_shape is not None:
+    if extra_shape == "unbatched":
+        # Restore [1, C, H, W] → [C, H, W]
+        x = x.squeeze(0)
+    elif extra_shape is not None:
         B_orig, C_orig, T = extra_shape
         # Unmerge B and T: [B_orig*T, C, H, W] → [B_orig, C, T, H, W]
         H, W = x.shape[2], x.shape[3]
