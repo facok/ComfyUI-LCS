@@ -32,6 +32,10 @@ def _latent_to_color_preview(samples, lcs_data, sigma, upscale=8):
 
     raw = samples / SCALE_FACTOR + SHIFT_FACTOR
     patches, h_len, w_len, _ = patchify(raw)
+    if patches is None:
+        # Incompatible latent format — return black image
+        B = samples.shape[0] if samples.ndim >= 4 else 1
+        return torch.zeros(B, upscale * 2, upscale * 2, 3)
     projection = (patches - ld.mean) @ ld.basis
 
     alpha_t, beta_t = get_alpha_beta(sigma, device=device)

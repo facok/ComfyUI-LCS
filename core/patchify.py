@@ -24,6 +24,9 @@ def patchify(x):
         # Merge B and T: [B*T, C, H, W]
         x = x.permute(0, 2, 1, 3, 4).reshape(B_orig * T, C, H, W)
     B, C, H, W = x.shape
+    if H < 2 or W < 2:
+        # Incompatible latent format (e.g. LTXAV uses flattened 1D layout)
+        return None, None, None, None
     h_len = H // 2
     w_len = W // 2
     patches = rearrange(x, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=2, pw=2)

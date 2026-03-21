@@ -136,6 +136,8 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
 
         # Patchify
         patches, h_len, w_len, extra_shape = patchify(raw)
+        if patches is None:
+            return denoised  # Incompatible latent format
 
         # Apply sharpness edit
         if mask is not None:

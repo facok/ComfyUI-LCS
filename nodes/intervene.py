@@ -50,6 +50,8 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
 
         # Patchify
         patches, h_len, w_len, extra_shape = patchify(raw)
+        if patches is None:
+            return denoised  # Incompatible latent format
 
         # Project to LCS
         projection = (patches - mu) @ B_mat  # [B, L, 3]
@@ -331,6 +333,8 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
 
         # Patchify
         patches, h_len, w_len, extra_shape = patchify(raw)
+        if patches is None:
+            return denoised  # Incompatible latent format
 
         # Project to LCS
         projection = (patches - mu) @ B_mat  # [B, L, 3]
