@@ -86,16 +86,15 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
             imgs[j, :, :, 1] = g
             imgs[j, :, :, 2] = b
 
-        # VAE encode → [B, 16, H/8, W/8]
+        # VAE encode → [B, C, H/8, W/8] (or [1, C, T, H/8, W/8] for video VAEs)
         latent = vae.encode(imgs[:, :, :, :3])
 
-        # Patchify → [B, L, 64]
+        # Patchify → [B, L, D]
         patches, _, _ = patchify(latent)
 
-        # Average across patches → [B, 64]
+        # Average across patches → [B, D]
         avg = patches.mean(dim=1).cpu()
-        for j in range(actual_batch):
-            vectors.append(avg[j])
+        vectors.extend(avg.unbind(0))
 
         pbar.update(actual_batch)
 
