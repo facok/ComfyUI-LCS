@@ -163,14 +163,16 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
             # VAE encode → [B, 16, H/8, W/8]
             latent = vae.encode(imgs_bhwc)
 
-            # Patchify → [B, L, 64], average across patches → [B, 64]
+            # Patchify → [B', L, D], average across patches → [B', D]
+            # B' may differ from actual_batch for video VAEs
             patches, _, _ = patchify(latent)
             avg = patches.mean(dim=1).cpu()
 
+            encoded_count = avg.shape[0]
             vectors.extend(avg.unbind(0))
-            blur_labels.extend([blur_sigma] * actual_batch)
+            blur_labels.extend([blur_sigma] * encoded_count)
 
-            pbar.update(actual_batch)
+            pbar.update(encoded_count)
 
     # Stack all vectors: [N, 64]
     X = torch.stack(vectors, dim=0).float()
