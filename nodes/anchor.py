@@ -175,12 +175,17 @@ def _build_adaptive_anchor_fn(lcs_data, mode, intensity, mask,
             if state["auto_intensity_val"] is None:
                 if mode == "self_anchor" and state["drift_count"] > 0:
                     drift_signal = state["drift_sum"] / state["drift_count"]
+                elif mode == "self_anchor":
+                    # No observe phase (img2img) — measure from seeded baseline
+                    if state["prev_c_mean"] is not None:
+                        drift_signal = (c_norm.detach().mean(dim=1, keepdim=True)
+                                        - state["prev_c_mean"]).abs().mean().item()
+                    else:
+                        drift_signal = 0.05  # conservative default
                 elif mode == "reference":
                     drift_signal = (c_norm - c_ref_resized).abs().mean().item()
                 elif mode == "smooth":
                     drift_signal = (c_filtered - c_norm).abs().mean().item()
-                else:
-                    drift_signal = 0.2  # fallback
                 state["auto_intensity_val"] = estimate_intensity(drift_signal)
             effective_intensity = state["auto_intensity_val"]
 
@@ -218,11 +223,9 @@ def _build_adaptive_anchor_fn(lcs_data, mode, intensity, mask,
             r_current = compute_local_relationships(c_norm, h_len, w_len)
 
             if state["r_ema"] is None:
-                # No warmup data yet — seed EMA and skip
+                # Seed EMA — first step, no correction yet (anomalies will be zero)
                 state["r_ema"] = r_current.detach().clone()
                 state["c_ema"] = c_norm.detach().clone()
-                state["prev_c_mean"] = c_norm.detach().mean(dim=1, keepdim=True)
-                return denoised
 
             anomaly_mag = detect_anomalies_adaptive(r_current, state["r_ema"])
             c_corrected = infer_color_from_neighbors(
