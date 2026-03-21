@@ -4,15 +4,17 @@ from einops import rearrange
 
 
 def patchify(x):
-    """Convert latent [B, C, H, W] or [B, C, T, H, W] → patch sequence [B, L, C*4].
+    """Convert latent [B, C, H, W] or [B, C, ..., H, W] → patch sequence [B, L, C*4].
 
-    For video VAEs (5D input), squeezes the temporal dimension (T must be 1).
+    For video VAEs (5D+ input), collapses all dimensions between C and H×W
+    by reshaping to 4D. Only the last frame/slice is used for spatial patchification.
     L = (H/2) * (W/2), d = C * 2 * 2.
     Returns (patches, h_len, w_len) where h_len=H/2, w_len=W/2.
     """
-    if x.ndim == 5:
-        # Video VAE: [B, C, T, H, W] → squeeze T
-        x = x.squeeze(2)
+    if x.ndim > 4:
+        # Video VAE: [B, C, T, H, W] or similar — take first frame
+        while x.ndim > 4:
+            x = x[:, :, 0]
     B, C, H, W = x.shape
     h_len = H // 2
     w_len = W // 2
