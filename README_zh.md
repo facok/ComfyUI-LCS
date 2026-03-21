@@ -30,6 +30,7 @@ LCS 在扩散采样**过程中**操作，而非生成之后——这是与传统
 | 模型 | 状态 |
 |------|------|
 | FLUX | 已测试 |
+| FLUX2.klein | 已测试 |
 | z-image | 已测试 |
 | z-image-turbo | 已测试 |
 
@@ -82,7 +83,7 @@ LCS Load Data → LCS Tone Adjust → KSampler
 2. 选择预设（如 "Cinematic"）或手动调整滑条
 
 ![3d3c82eb0e89ed1608e40ac7a8cc3408](https://github.com/user-attachments/assets/62868e2d-0275-4801-a9bd-606bfea3ce2f)
-
+![42541357](https://github.com/user-attachments/assets/fe22f09e-98ac-4281-ae40-f58232c7700f)
 ### 锐度控制
 
 ```
