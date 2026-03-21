@@ -6,7 +6,7 @@ from comfy_api.latest import io
 
 from ..core.lcs_data import LCSData
 from ..core.patchify import patchify, unpatchify
-from ..core.sampling import SCALE_FACTOR, SHIFT_FACTOR, find_step_index
+from ..core.sampling import find_step_index, denoised_to_raw, raw_to_denoised, unpack_video_if_needed, repack_video_if_needed
 from ..core.timestep import get_alpha_beta, get_alpha_beta_t50, normalize_to_t50, denormalize_from_t50
 from ..core.color_space import hex_to_hsl, encode_hsl_to_lcs, decode_lcs_to_hsl, _hue_lerp
 
@@ -23,8 +23,9 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
     """
     def post_cfg_fn(args):
         """Post-CFG hook: project to LCS, apply color intervention, reconstruct."""
-        denoised = args["denoised"]  # [B, 16, H, W] in process_in space
+        denoised = args["denoised"]
         sigma = args["sigma"]
+        model = args["model"]
 
         # Determine current step index
         sigmas = args["model_options"]["transformer_options"]["sample_sigmas"]
@@ -34,19 +35,22 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
         if step_index < start_step or step_index > end_step:
             return denoised
 
+        # Unpack LTXAV packed format if needed
+        working, pack_info = unpack_video_if_needed(denoised, args)
+
         sigma_val = float(sigma.flatten()[0])
-        device = denoised.device
-        dtype = denoised.dtype
+        device = working.device
+        dtype = working.dtype
 
         # Move LCS data to device
         ld = lcs_data.to(device, dtype)
-        B_mat = ld.basis        # [64, 3]
-        mu = ld.mean            # [64]
-        anchor_lcs = ld.anchor_lcs    # [8, 3]
-        anchor_angles = ld.anchor_angles  # [6]
+        B_mat = ld.basis
+        mu = ld.mean
+        anchor_lcs = ld.anchor_lcs
+        anchor_angles = ld.anchor_angles
 
         # Convert from process_in to raw VAE space
-        raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
+        raw = denoised_to_raw(working, model)
 
         # Patchify
         patches, h_len, w_len, extra_shape = patchify(raw)
@@ -154,15 +158,16 @@ def _build_post_cfg_fn(lcs_data, target_colors_hsl, strength, mode, start_step, 
         new_projection = denormalize_from_t50(new_c_norm, alpha_t, beta_t, alpha_50, beta_50)
 
         # Reconstruct patches
-        patches_new = new_projection @ B_mat.T + mu + residual  # [B, L, 64]
+        patches_new = new_projection @ B_mat.T + mu + residual
 
         # Unpatchify
         raw_new = unpatchify(patches_new, h_len, w_len, extra_shape)
 
         # Convert back to process_in space
-        modified = (raw_new - SHIFT_FACTOR) * SCALE_FACTOR
+        modified = raw_to_denoised(raw_new, model).to(dtype)
 
-        return modified.to(dtype)
+        # Repack if LTXAV
+        return repack_video_if_needed(modified, denoised, pack_info)
 
     return post_cfg_fn
 
@@ -309,8 +314,9 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
 
     def post_cfg_fn(args):
         """Post-CFG hook: project to LCS, adjust contrast/brightness/saturation, reconstruct."""
-        denoised = args["denoised"]  # [B, 16, H, W] in process_in space
+        denoised = args["denoised"]
         sigma = args["sigma"]
+        model = args["model"]
 
         # Determine current step index
         sigmas = args["model_options"]["transformer_options"]["sample_sigmas"]
@@ -319,17 +325,20 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
         if step_index < start_step or step_index > end_step:
             return denoised
 
+        # Unpack LTXAV packed format if needed
+        working, pack_info = unpack_video_if_needed(denoised, args)
+
         sigma_val = float(sigma.flatten()[0])
-        device = denoised.device
-        dtype = denoised.dtype
+        device = working.device
+        dtype = working.dtype
 
         ld = lcs_data.to(device, dtype)
-        B_mat = ld.basis        # [64, 3]
-        mu = ld.mean            # [64]
-        anchor_lcs = ld.anchor_lcs  # [8, 3]
+        B_mat = ld.basis
+        mu = ld.mean
+        anchor_lcs = ld.anchor_lcs
 
         # Convert from process_in to raw VAE space
-        raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
+        raw = denoised_to_raw(working, model)
 
         # Patchify
         patches, h_len, w_len, extra_shape = patchify(raw)
@@ -337,11 +346,11 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
             return denoised  # Incompatible latent format
 
         # Project to LCS
-        projection = (patches - mu) @ B_mat  # [B, L, 3]
+        projection = (patches - mu) @ B_mat
 
-        # Compute residual (61D orthogonal complement)
-        reconstruction = projection @ B_mat.T + mu  # [B, L, 64]
-        residual = patches - reconstruction  # [B, L, 64]
+        # Compute residual (orthogonal complement)
+        reconstruction = projection @ B_mat.T + mu
+        residual = patches - reconstruction
 
         # Get timestep statistics
         alpha_t, beta_t = get_alpha_beta(sigma_val, device=device)
@@ -350,7 +359,7 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
         alpha_50, beta_50 = alpha_50.to(dtype), beta_50.to(dtype)
 
         # Normalize to t=50
-        c_norm = normalize_to_t50(projection, alpha_t, beta_t, alpha_50, beta_50)  # [B, L, 3]
+        c_norm = normalize_to_t50(projection, alpha_t, beta_t, alpha_50, beta_50)
 
         # Achromatic axis: black → white in LCS anchor space
         black = anchor_lcs[6]  # [3]
@@ -406,15 +415,16 @@ def _build_tone_fn(lcs_data, contrast, brightness, saturation, color_temperature
         new_projection = denormalize_from_t50(new_c_norm, alpha_t, beta_t, alpha_50, beta_50)
 
         # Reconstruct patches
-        patches_new = new_projection @ B_mat.T + mu + residual  # [B, L, 64]
+        patches_new = new_projection @ B_mat.T + mu + residual
 
         # Unpatchify
         raw_new = unpatchify(patches_new, h_len, w_len, extra_shape)
 
         # Convert back to process_in space
-        modified = (raw_new - SHIFT_FACTOR) * SCALE_FACTOR
+        modified = raw_to_denoised(raw_new, model).to(dtype)
 
-        return modified.to(dtype)
+        # Repack if LTXAV
+        return repack_video_if_needed(modified, denoised, pack_info)
 
     return post_cfg_fn
 

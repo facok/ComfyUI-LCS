@@ -10,7 +10,7 @@ from safetensors.torch import save_file, load_file
 from ..core.sharpness import SharpnessData, calibrate_sharpness
 from ..core.calibration import vae_fingerprint
 from ..core.patchify import patchify, unpatchify
-from ..core.sampling import SCALE_FACTOR, SHIFT_FACTOR, find_step_index
+from ..core.sampling import find_step_index, denoised_to_raw, raw_to_denoised, unpack_video_if_needed, repack_video_if_needed
 
 SHARPNESS_DATA = io.Custom("SHARPNESS_DATA")
 LCS_DATA = io.Custom("LCS_DATA")
@@ -115,8 +115,9 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
     edit_vec = (strength * sharpness_data.sign) * pc1_dir  # [64], on CPU
 
     def post_cfg_fn(args):
-        denoised = args["denoised"]  # [B, 16, H, W] in process_in space
+        denoised = args["denoised"]
         sigma = args["sigma"]
+        model = args["model"]
 
         # Step gating
         sigmas = args["model_options"]["transformer_options"]["sample_sigmas"]
@@ -125,14 +126,17 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         if step_index < start_step or step_index > end_step:
             return denoised
 
-        device = denoised.device
-        dtype = denoised.dtype
+        # Unpack LTXAV packed format if needed
+        working, pack_info = unpack_video_if_needed(denoised, args)
+
+        device = working.device
+        dtype = working.dtype
 
         # Move edit vector to device/dtype (short-circuits if already there)
         ev = edit_vec.to(device=device, dtype=dtype)
 
         # Convert from process_in to raw VAE space
-        raw = denoised / SCALE_FACTOR + SHIFT_FACTOR  # [B, 16, H, W]
+        raw = denoised_to_raw(working, model)
 
         # Patchify
         patches, h_len, w_len, extra_shape = patchify(raw)
@@ -152,7 +156,10 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
         raw_new = unpatchify(patches_new, h_len, w_len, extra_shape)
 
         # Convert back to process_in space
-        return ((raw_new - SHIFT_FACTOR) * SCALE_FACTOR).to(dtype)
+        modified = raw_to_denoised(raw_new, model).to(dtype)
+
+        # Repack if LTXAV
+        return repack_video_if_needed(modified, denoised, pack_info)
 
     return post_cfg_fn
 

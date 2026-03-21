@@ -12,25 +12,31 @@ from ..core.lcs_data import LCSData
 from ..core.patchify import patchify
 from ..core.timestep import get_alpha_beta, get_alpha_beta_t50, normalize_to_t50
 from ..core.color_space import decode_lcs_to_hsl, hsl_to_rgb
+from ..core.sampling import denoised_to_raw, unpack_video_if_needed
 
 LCS_DATA = io.Custom("LCS_DATA")
 
-# FLUX VAE constants
-SCALE_FACTOR = 0.3611
-SHIFT_FACTOR = 0.1159
+# FLUX VAE constants — fallback for LCSPreviewColors which has no model access
+_FLUX_SCALE_FACTOR = 0.3611
+_FLUX_SHIFT_FACTOR = 0.1159
 
 
-def _latent_to_color_preview(samples, lcs_data, sigma, upscale=8):
+def _latent_to_color_preview(samples, lcs_data, sigma, upscale=8, model=None):
     """Convert latent tensor to LCS color preview image.
 
-    samples: [B, 16, H, W] in process_in space
+    samples: [B, C, H, W] or [B, C, T, H, W] in process_in space
+    model: if provided, uses model.latent_format for space conversion;
+           otherwise falls back to FLUX constants.
     Returns: [B, H_up, W_up, 3] float32 in [0,1]
     """
     device = samples.device
     dtype = samples.dtype
     ld = lcs_data.to(device, dtype)
 
-    raw = samples / SCALE_FACTOR + SHIFT_FACTOR
+    if model is not None:
+        raw = denoised_to_raw(samples, model)
+    else:
+        raw = samples / _FLUX_SCALE_FACTOR + _FLUX_SHIFT_FACTOR
     patches, h_len, w_len, _ = patchify(raw)
     if patches is None:
         # Incompatible latent format — return black image
@@ -130,11 +136,15 @@ class LCSStepObserver(io.ComfyNode):
             """Post-CFG hook: generate color preview and save to temp directory."""
             denoised = args["denoised"]
             sigma = args["sigma"]
+            model = args["model"]
             sigma_val = float(sigma.flatten()[0])
+
+            # Unpack LTXAV packed format if needed
+            working, _ = unpack_video_if_needed(denoised, args)
 
             # Generate color preview for first batch item
             preview = _latent_to_color_preview(
-                denoised[:1], lcs_data, sigma_val, upscale=4
+                working[:1], lcs_data, sigma_val, upscale=4, model=model
             )
 
             # Save to temp directory
