@@ -1,12 +1,12 @@
-"""Patchify/unpatchify for FLUX latent tensors (patch_size=2, 16 channels → 64-dim patches)."""
+"""Patchify/unpatchify for FLUX latent tensors (patch_size=2, auto-detect channels)."""
 
 from einops import rearrange
 
 
 def patchify(x):
-    """Convert latent [B, 16, H, W] → patch sequence [B, L, 64].
+    """Convert latent [B, C, H, W] → patch sequence [B, L, C*4].
 
-    L = (H/2) * (W/2), d = 16 * 2 * 2 = 64.
+    L = (H/2) * (W/2), d = C * 2 * 2.
     Returns (patches, h_len, w_len) where h_len=H/2, w_len=W/2.
     """
     B, C, H, W = x.shape
@@ -17,9 +17,12 @@ def patchify(x):
 
 
 def unpatchify(patches, h_len, w_len):
-    """Convert patch sequence [B, L, 64] → latent [B, 16, H, W].
+    """Convert patch sequence [B, L, C*4] → latent [B, C, H, W].
 
+    Auto-detects channel count from patch dimension: C = D / 4.
     h_len, w_len from patchify output.
     """
+    D = patches.shape[-1]
+    C = D // 4  # patch_size=2×2=4
     return rearrange(patches, "b (h w) (c ph pw) -> b c (h ph) (w pw)",
-                     h=h_len, w=w_len, c=16, ph=2, pw=2)
+                     h=h_len, w=w_len, c=C, ph=2, pw=2)
