@@ -4,6 +4,7 @@ from .calibrate import LCSLoadData
 from .intervene import LCSColorIntervene, LCSColorBatch, LCSToneAdjust
 from .observe import LCSPreviewColors, LCSStepObserver
 from .sharpen import LCSSharpnessCalibrate, LCSSharpnessIntervene
+from .anchor import LCSColorAnchor
 
 NODE_CLASS_MAPPINGS = {
     "LCSLoadData": LCSLoadData,
@@ -14,6 +15,7 @@ NODE_CLASS_MAPPINGS = {
     "LCSStepObserver": LCSStepObserver,
     "LCSSharpnessCalibrate": LCSSharpnessCalibrate,
     "LCSSharpnessIntervene": LCSSharpnessIntervene,
+    "LCSColorAnchor": LCSColorAnchor,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -25,4 +27,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "LCSStepObserver": "LCS Step Observer",
     "LCSSharpnessCalibrate": "LCS Sharpness Calibrate",
     "LCSSharpnessIntervene": "LCS Sharpness Intervene",
+    "LCSColorAnchor": "LCS Color Anchor",
 }

@@ -9,6 +9,7 @@ from .nodes.calibrate import LCSLoadData
 from .nodes.intervene import LCSColorIntervene, LCSColorBatch, LCSToneAdjust
 from .nodes.observe import LCSPreviewColors, LCSStepObserver
 from .nodes.sharpen import LCSSharpnessCalibrate, LCSSharpnessIntervene
+from .nodes.anchor import LCSColorAnchor
 
 
 class LCSExtension(ComfyExtension):
@@ -25,6 +26,7 @@ class LCSExtension(ComfyExtension):
             LCSStepObserver,
             LCSSharpnessCalibrate,
             LCSSharpnessIntervene,
+            LCSColorAnchor,
         ]
 
 
