@@ -297,6 +297,30 @@ ComfyUI-LCS/
     └── tone_preset.js    # 前端预设同步
 ```
 
+## 更新日志
+
+### 2026-03-21
+- **颜色锚定：auto 模式** — 新增 `auto` 模式，根据连接的输入自动推断校正策略（self_anchor / reference / smooth），并根据实测漂移推导强度。零配置使用。
+- **颜色锚定：自适应调度** — 阶段分配（observe/correct/skip）和强度包络在运行时从 sigma 调度表推导。
+
+### 2026-03-20
+- **锐度控制** — 通过模糊刺激 PCA 发现锐度子空间。新增 `LCS Sharpness Calibrate` + `LCS Sharpness Intervene` 节点。PC1 解释 ~97% 方差，与颜色正交。
+- **颜色正交锐度** — 可选连接 `lcs_data`，在锐度校准时移除颜色分量，防止颜色偏移。
+
+### 2026-03-19
+- **视频 VAE 支持（Wan）** — 在 patchify/unpatchify 中处理 5D 视频潜在表示。视频 VAE 自动回退到逐帧编码。
+- **LTXV 兼容** — patchify 中填充奇数空间维度，处理 3D 张量，不兼容格式时优雅跳过。
+- **FLUX2 支持** — unpatchify 自动检测 128 通道潜在表示。
+- **通用潜在格式** — 使用模型的 `latent_format` 进行空间转换，不再硬编码 FLUX 常量。
+
+### 2026-03-18
+- **色调调整** — `LCS Tone Adjust` 节点，支持对比度、亮度、饱和度、色温滑条。10 个预设，前端实时同步。
+- **色温控制** — 沿 LCS 蓝-黄轴的暖/冷偏移。
+- **双锥 HSL 几何** — 通过双锥 LCS-to-HSL 映射实现正确的 Type II 干预。
+
+### 2026-03-17
+- **首次发布** — 颜色引导（Type I + Type II + 插值模式）、批量多色、局部遮罩控制、潜在颜色预览、步骤观察器。按 VAE 自动校准并缓存。
+
 ## 引用
 
 官方仓库：[ExplainableML/LCS](https://github.com/ExplainableML/LCS)

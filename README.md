@@ -298,6 +298,30 @@ ComfyUI-LCS/
     └── tone_preset.js    # Frontend preset sync
 ```
 
+## Changelog
+
+### 2026-03-21
+- **Color Anchor: auto mode** — New `auto` mode that infers correction strategy (self_anchor / reference / smooth) from connected inputs and derives intensity from measured drift. Zero-config usage.
+- **Color Anchor: adaptive scheduling** — Phase assignment (observe/correct/skip) and strength envelope are derived from the sigma schedule at runtime.
+
+### 2026-03-20
+- **Sharpness Control** — New sharpness subspace discovered via PCA on blur stimuli. `LCS Sharpness Calibrate` + `LCS Sharpness Intervene` nodes. PC1 explains ~97% variance, orthogonal to color.
+- **Color-orthogonal sharpness** — Optional `lcs_data` input removes color component during sharpness calibration, preventing color shift.
+
+### 2026-03-19
+- **Video VAE support (Wan)** — Handle 5D video latents in patchify/unpatchify. Per-image VAE encoding fallback for video VAEs.
+- **LTXV compatibility** — Pad odd spatial dims in patchify, handle 3D tensors, skip gracefully for incompatible formats.
+- **FLUX2 support** — Auto-detect 128-channel latents in unpatchify.
+- **Universal latent format** — Use model's `latent_format` for space conversion instead of hardcoded FLUX constants.
+
+### 2026-03-18
+- **Tone Adjust** — `LCS Tone Adjust` node with contrast, brightness, saturation, temperature sliders. 10 presets with frontend real-time sync.
+- **Color temperature** — Warm/cool shift along LCS blue-yellow axis.
+- **Bicone HSL geometry** — Correct Type II intervention via bicone LCS-to-HSL mapping.
+
+### 2026-03-17
+- **Initial release** — Color steering (Type I + Type II + interpolated), batch multi-color, localized mask control, latent color preview, step observer. Per-VAE auto-calibration with caching.
+
 ## Citation
 
 Official repository: [ExplainableML/LCS](https://github.com/ExplainableML/LCS)
