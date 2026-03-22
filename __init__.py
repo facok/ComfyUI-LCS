@@ -3,6 +3,10 @@
 Paper: "The Latent Color Subspace" (arXiv:2603.12261v1, ICML 2026)
 """
 
+# Register as ComfyUI_LCS so other plugins can `from ComfyUI_LCS.core.xxx import ...`
+import sys as _sys
+_sys.modules.setdefault("ComfyUI_LCS", _sys.modules[__name__])
+
 # V3 ComfyExtension entry point
 from comfy_api.latest import ComfyExtension, io
 from .nodes.calibrate import LCSLoadData
