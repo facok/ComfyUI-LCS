@@ -19,11 +19,14 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 def _save_sharpness(data: SharpnessData, path: str):
     """Save SharpnessData to safetensors file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    save_file({
+    tensors = {
         "basis": data.basis.contiguous(),
         "mean": data.mean.contiguous(),
         "sign": torch.tensor([data.sign]),
-    }, path)
+    }
+    if data.lcs_basis is not None:
+        tensors["lcs_basis"] = data.lcs_basis.contiguous()
+    save_file(tensors, path)
 
 
 def _load_sharpness(path: str) -> SharpnessData:
@@ -33,6 +36,7 @@ def _load_sharpness(path: str) -> SharpnessData:
         basis=d["basis"],
         mean=d["mean"],
         sign=float(d["sign"].item()),
+        lcs_basis=d.get("lcs_basis"),
     )
 
 
@@ -67,7 +71,7 @@ class LCSSharpnessCalibrate(io.ComfyNode):
     def execute(cls, vae, lcs_data=None) -> io.NodeOutput:
         fp = vae_fingerprint(vae)
         suffix = "_lcs" if lcs_data is not None else ""
-        cache_path = os.path.join(DATA_DIR, f"sharpness_{fp}_freq{suffix}.safetensors")
+        cache_path = os.path.join(DATA_DIR, f"sharpness_{fp}_grating{suffix}.safetensors")
 
         if os.path.exists(cache_path):
             data = _load_sharpness(cache_path)
@@ -91,9 +95,14 @@ def _build_sharpness_fn(sharpness_data, strength, start_step, end_step, mask):
     At intervention time, we just add delta along that direction.
     """
     # Precompute constant edit vector once (not per-step).
-    # Remove DC component from pc1_dir to prevent brightness shift.
+    # Remove DC component from pc1_dir to prevent brightness shift,
+    # then re-orthogonalize against LCS basis (if available) because
+    # the DC vector [1,1,...,1] has nonzero projection onto LCS color space.
     pc1_dir = sharpness_data.basis[:, 0].clone()
     pc1_dir = pc1_dir - pc1_dir.mean()
+    if sharpness_data.lcs_basis is not None:
+        B = sharpness_data.lcs_basis.to(pc1_dir.device, pc1_dir.dtype)
+        pc1_dir = pc1_dir - B @ (B.T @ pc1_dir)
     edit_vec = (strength * sharpness_data.sign) * pc1_dir  # [64], on CPU
 
     def post_cfg_fn(args):

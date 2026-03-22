@@ -33,6 +33,7 @@ class SharpnessData:
     basis: torch.Tensor   # [64, K] PCA basis (columns), K typically 1-2
     mean: torch.Tensor    # [64] PCA mean (in color-removed space if lcs_data was used)
     sign: float           # +1 or -1: ensures positive strength = sharper
+    lcs_basis: Optional[torch.Tensor] = None  # [64, 3] LCS basis used during calibration (for re-orthogonalization)
 
     def to(self, device, dtype=None):
         """Move all tensors to device/dtype."""
@@ -43,6 +44,7 @@ class SharpnessData:
             basis=self.basis.to(**kw),
             mean=self.mean.to(**kw),
             sign=self.sign,
+            lcs_basis=self.lcs_basis.to(**kw) if self.lcs_basis is not None else None,
         )
 
 
@@ -159,22 +161,25 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
     X = torch.stack(vectors, dim=0).float()
     print(f"[LCS Sharpness Calibration] Collected {X.shape[0]} vectors of dimension {X.shape[1]}")
 
-    # Remove per-vector mean BEFORE PCA.
-    # VAE encoding shifts the latent mean depending on stimulus content.
-    # Per-vector zero-mean forces PCA to find patterns in the relative channel
-    # structure, not in the absolute level.
-    X = X - X.mean(dim=1, keepdim=True)
-
-    # Optionally remove LCS color component to ensure sharpness PC1 is orthogonal to color
+    # Remove LCS color component FIRST, in the raw space where LCS was calibrated.
+    # This must happen before per-vector DC removal, because the LCS basis has
+    # significant DC components (PC1 ≈ brightness). Doing DC removal first would
+    # shift vectors into a different space where B^T(x - mu) is incorrect.
     if lcs_data is not None:
         print("[LCS Sharpness Calibration] Removing LCS color component...")
         lcs_mean = lcs_data.mean.to(X.device, X.dtype)
         lcs_basis = lcs_data.basis.to(X.device, X.dtype)
+        # Project out color: X' = X - B B^T (X - mu)
         centered = X - lcs_mean
         lcs_coords = centered @ lcs_basis  # [N, 3]
-        color_reconstruction = lcs_coords @ lcs_basis.T + lcs_mean
-        X = X - (color_reconstruction - lcs_mean)
+        X = X - lcs_coords @ lcs_basis.T
         print("[LCS Sharpness Calibration] Color component removed")
+
+    # Remove per-vector DC AFTER color removal.
+    # VAE encoding shifts the latent mean depending on stimulus content.
+    # Per-vector zero-mean forces PCA to find patterns in the relative channel
+    # structure, not in the absolute level.
+    X = X - X.mean(dim=1, keepdim=True)
 
     # Step 3: PCA
     print("[LCS Sharpness Calibration] Computing PCA...")
@@ -204,4 +209,5 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
         basis=basis,
         mean=mean,
         sign=sign,
+        lcs_basis=lcs_data.basis.clone() if lcs_data is not None else None,
     )
