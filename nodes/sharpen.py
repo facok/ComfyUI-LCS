@@ -39,9 +39,9 @@ def _load_sharpness(path: str) -> SharpnessData:
 class LCSSharpnessCalibrate(io.ComfyNode):
     """Calibrate the sharpness subspace for a VAE.
 
-    Generates blur stimuli at varying sigma levels, VAE-encodes them,
-    and runs PCA to find the sharpness direction in 64D patch space.
-    Result is cached per-VAE fingerprint.
+    Generates sinusoidal grating stimuli at varying spatial frequencies,
+    VAE-encodes them, and runs PCA to find the sharpness direction in
+    64D patch space.  Result is cached per-VAE fingerprint.
 
     When lcs_data is provided, the color component is removed during calibration,
     ensuring the sharpness PC1 is orthogonal to the color subspace.
@@ -53,7 +53,7 @@ class LCSSharpnessCalibrate(io.ComfyNode):
             node_id="LCSSharpnessCalibrate",
             display_name="LCS Sharpness Calibrate",
             category="LCS/calibration",
-            description="Auto-calibrate and cache sharpness subspace data per-VAE. Connect lcs_data to ensure sharpness edits don't affect color.",
+            description="Auto-calibrate and cache sharpness subspace data per-VAE using frequency gratings. Connect lcs_data to ensure sharpness edits don't affect color.",
             inputs=[
                 io.Vae.Input("vae", tooltip="VAE model (calibration is cached per-VAE)"),
                 LCS_DATA.Input("lcs_data", optional=True, tooltip="Optional: remove color component to prevent color shifts"),
@@ -67,7 +67,7 @@ class LCSSharpnessCalibrate(io.ComfyNode):
     def execute(cls, vae, lcs_data=None) -> io.NodeOutput:
         fp = vae_fingerprint(vae)
         suffix = "_lcs" if lcs_data is not None else ""
-        cache_path = os.path.join(DATA_DIR, f"sharpness_{fp}{suffix}.safetensors")
+        cache_path = os.path.join(DATA_DIR, f"sharpness_{fp}_freq{suffix}.safetensors")
 
         if os.path.exists(cache_path):
             data = _load_sharpness(cache_path)
@@ -150,8 +150,9 @@ class LCSSharpnessIntervene(io.ComfyNode):
     """Control sharpness during FLUX generation via the sharpness subspace.
 
     Installs a post-CFG hook that adds a scaled shift along the sharpness
-    PC1 direction. When calibrated with lcs_data, the sharpness direction
-    is orthogonal to color, so color is preserved by construction.
+    PC1 direction (calibrated from sinusoidal grating stimuli). When calibrated
+    with lcs_data, the sharpness direction is orthogonal to color, so color is
+    preserved by construction.
     Positive strength = sharper, negative = blurrier.
     """
 
