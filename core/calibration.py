@@ -103,11 +103,12 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
             # Normal VAE: batch encode worked
             vectors.extend(avg.unbind(0))
         else:
-            # Video VAE: batch not supported, encode one by one
-            vectors.extend(avg.unbind(0))
-            for k in range(1, actual_batch):
+            # Video VAE or unexpected batch collapse — encode one by one
+            for k in range(actual_batch):
                 single = imgs[k:k+1, :, :, :3]
                 lat = vae.encode(single)
+                if lat.ndim == 5:
+                    lat = lat[:, :, 0, :, :]
                 p, _, _, _ = patchify(lat)
                 vectors.append(p.mean(dim=1).cpu().squeeze(0))
 

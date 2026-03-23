@@ -23,8 +23,10 @@ def compute_local_relationships(c, h_len, w_len, kernel_radius=2):
     padded = F.pad(grid_chw, (r, r, r, r), mode="replicate")  # [B, 3, H+2r, W+2r]
 
     # Center values — normalize for cosine similarity
-    center = grid_chw  # [B, 3, H, W]
-    center_norm = center / center.norm(dim=1, keepdim=True).clamp(min=1e-8)
+    center_norm = grid_chw / grid_chw.norm(dim=1, keepdim=True).clamp(min=1e-8)
+
+    # Pre-normalize padded tensor once (avoids per-neighbor normalization in loop)
+    padded_norm = padded / padded.norm(dim=1, keepdim=True).clamp(min=1e-8)
 
     # Collect cosine similarities with each neighbor
     similarities = []
@@ -34,8 +36,7 @@ def compute_local_relationships(c, h_len, w_len, kernel_radius=2):
                 continue
             y_start = r + dy
             x_start = r + dx
-            neighbor = padded[:, :, y_start:y_start + h_len, x_start:x_start + w_len]
-            neighbor_norm = neighbor / neighbor.norm(dim=1, keepdim=True).clamp(min=1e-8)
+            neighbor_norm = padded_norm[:, :, y_start:y_start + h_len, x_start:x_start + w_len]
             # Cosine similarity per pixel
             sim = (center_norm * neighbor_norm).sum(dim=1)  # [B, H, W]
             similarities.append(sim)
@@ -43,26 +44,6 @@ def compute_local_relationships(c, h_len, w_len, kernel_radius=2):
     # Stack to [B, H, W, N_neighbors] -> [B, L, N_neighbors]
     rel = torch.stack(similarities, dim=-1)  # [B, H, W, N_neighbors]
     return rel.reshape(B, -1, n_neighbors)
-
-
-def detect_anomalies(r_current, r_reference, threshold=0.3):
-    """Compare current vs reference relationships, return per-patch anomaly.
-
-    Returns anomaly_magnitude [B, L, 1] -- 0.0 where relationships match,
-    >0 where disrupted, scaled by deviation magnitude.
-    """
-    # Mean absolute difference across neighbor relationships
-    diff = (r_current - r_reference).abs().mean(dim=-1, keepdim=True)  # [B, L, 1]
-
-    # Soft threshold: below threshold -> 0, above -> linear ramp
-    anomaly = (diff - threshold).clamp(min=0.0)
-
-    # Normalize so max anomaly ~ 1.0 (diff ranges from 0 to ~2 for cosine)
-    # Max possible diff for cosine sims is 2.0, minus threshold
-    max_range = 2.0 - threshold
-    anomaly = anomaly / max(max_range, 1e-8)
-
-    return anomaly
 
 
 def detect_anomalies_adaptive(r_current, r_reference):
@@ -88,7 +69,7 @@ def detect_anomalies_adaptive(r_current, r_reference):
     return anomaly.unsqueeze(-1)  # [B, L, 1]
 
 
-def infer_color_from_neighbors(c, r_ref, anomaly_mag, h_len, w_len, kernel_radius=2):
+def infer_color_from_neighbors(c, anomaly_mag, h_len, w_len, kernel_radius=2):
     """For anomalous patches, infer correct color from non-anomalous neighbors.
 
     Uses inverse-anomaly weighting: patches with low anomaly contribute more.

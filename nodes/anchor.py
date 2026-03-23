@@ -74,7 +74,6 @@ def _build_adaptive_anchor_fn(lcs_data, mode, intensity, mask,
         "envelope": None,
         "correction_index": 0,
         "r_ema": None,
-        "c_ema": None,
         "prev_c_mean": None,
         "drift_sum": 0.0,
         "drift_count": 0,
@@ -140,10 +139,8 @@ def _build_adaptive_anchor_fn(lcs_data, mode, intensity, mask,
             decay = 0.8
             if state["r_ema"] is None:
                 state["r_ema"] = r_current.detach().clone()
-                state["c_ema"] = c_norm.detach().clone()
             else:
                 state["r_ema"] = decay * state["r_ema"] + (1 - decay) * r_current.detach()
-                state["c_ema"] = decay * state["c_ema"] + (1 - decay) * c_norm.detach()
 
             # Collect step-to-step drift for auto_intensity (self_anchor)
             c_mean_now = c_norm.detach().mean(dim=1, keepdim=True)
@@ -225,18 +222,16 @@ def _build_adaptive_anchor_fn(lcs_data, mode, intensity, mask,
             if state["r_ema"] is None:
                 # Seed EMA — first step, no correction yet (anomalies will be zero)
                 state["r_ema"] = r_current.detach().clone()
-                state["c_ema"] = c_norm.detach().clone()
 
             anomaly_mag = detect_anomalies_adaptive(r_current, state["r_ema"])
             c_corrected = infer_color_from_neighbors(
-                c_norm, state["r_ema"], anomaly_mag, h_len, w_len
+                c_norm, anomaly_mag, h_len, w_len
             )
             new_c_norm = c_norm + step_strength * (c_corrected - c_norm)
 
             # Update EMA (slow decay during correction)
             decay = 0.95
             state["r_ema"] = decay * state["r_ema"] + (1 - decay) * r_current.detach()
-            state["c_ema"] = decay * state["c_ema"] + (1 - decay) * c_norm.detach()
             state["prev_c_mean"] = c_norm.detach().mean(dim=1, keepdim=True)
 
         # --- Apply mask ---

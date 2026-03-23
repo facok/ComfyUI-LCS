@@ -1,5 +1,7 @@
 """Bilateral filter in LCS space for smooth color anchoring."""
 
+import math
+
 import torch
 import torch.nn.functional as F
 
@@ -54,7 +56,7 @@ def bilateral_filter_lcs(c, h_len, w_len, sigma_spatial, sigma_color, kernel_rad
         for dx in range(-r, r + 1):
             # Spatial weight (constant per offset)
             spatial_dist_sq = float(dy * dy + dx * dx)
-            w_spatial = torch.exp(torch.tensor(spatial_dist_sq * inv_2ss, device=c.device, dtype=c.dtype))
+            w_spatial = math.exp(spatial_dist_sq * inv_2ss)
 
             # Extract neighbor values from padded grid
             y_start = r + dy
@@ -67,8 +69,8 @@ def bilateral_filter_lcs(c, h_len, w_len, sigma_spatial, sigma_color, kernel_rad
             w_color = torch.exp(color_dist_sq * inv_2sc)  # [B, 1, H, W]
 
             w = w_spatial * w_color
-            weight_sum = weight_sum + w
-            value_sum = value_sum + w * neighbor
+            weight_sum.add_(w)
+            value_sum.add_(w * neighbor)
 
     # Normalize
     result = value_sum / weight_sum.clamp(min=1e-8)  # [B, 3, H, W]
