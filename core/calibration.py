@@ -89,6 +89,10 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
         # VAE encode — try batch first, fall back to per-image for video VAEs
         latent = vae.encode(imgs[:, :, :, :3])
 
+        # Squeeze video VAE temporal dim — calibration uses still images
+        if latent.ndim == 5:
+            latent = latent[:, :, 0, :, :]
+
         # Patchify → [B', L, D]
         patches, _, _, _ = patchify(latent)
 
@@ -137,6 +141,8 @@ def calibrate(vae, num_colors=512, image_size=512, batch_size=8):
         img[0, :, :, 1] = g
         img[0, :, :, 2] = b
         latent = vae.encode(img[:, :, :, :3])
+        if latent.ndim == 5:
+            latent = latent[:, :, 0, :, :]
         patches, _, _, _ = patchify(latent)
         avg = patches.mean(dim=1).cpu().squeeze(0)  # [64]
         # Project to LCS
