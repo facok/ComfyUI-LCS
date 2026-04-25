@@ -1,0 +1,16 @@
+[project]
+name = "comfyui-lcs"
+description = "Latent Color Space (LCS) manipulation for ComfyUI — brightness, tone, sharpness, and diversity tools."
+version = "1.0.0"
+license = "MIT"
+requires-python = ">=3.10"
+
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/facok/ComfyUI-LCS"
+
+[tool.comfy]
+PublisherId = "fok2026"
+DisplayName = "LCS"
+Icon = ""
