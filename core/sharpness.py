@@ -75,6 +75,25 @@ def _generate_grating_batch(
     return torch.stack(batch, dim=0)
 
 
+def _latent_to_stimulus_vectors(latent: torch.Tensor, expected_batch: int) -> Optional[torch.Tensor]:
+    """Convert encoded latents to one averaged patch vector per input stimulus."""
+    patches, _, _, extra_shape = patchify(latent)
+    if patches is None:
+        return None
+
+    avg = patches.mean(dim=1).cpu()
+    if isinstance(extra_shape, tuple):
+        batch, _, frames = extra_shape
+        if batch != expected_batch or avg.shape[0] != batch * frames:
+            return None
+        return avg.reshape(batch, frames, avg.shape[-1]).mean(dim=1)
+
+    if avg.shape[0] != expected_batch:
+        return None
+
+    return avg
+
+
 def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
                         frequencies: Tuple[float, ...] = (1, 2, 4, 8, 16, 32, 64),
                         batch_size: int = 8,
@@ -141,24 +160,31 @@ def calibrate_sharpness(vae, num_samples: int = 64, image_size: int = 512,
 
         # VAE encode — try batch first, fall back to per-image for video VAEs
         latent = vae.encode(imgs_bhwc)
-        patches, _, _, _ = patchify(latent)
-        avg = patches.mean(dim=1).cpu()
+        avg = _latent_to_stimulus_vectors(latent, actual_batch)
 
-        if avg.shape[0] == actual_batch:
+        if avg is not None:
             vectors.extend(avg.unbind(0))
         else:
-            # Video VAE: batch not fully supported, encode one by one
-            vectors.extend(avg.unbind(0))
-            for k in range(1, actual_batch):
+            # Some VAEs do not preserve image batching through encode. In that
+            # case discard the batched result and encode every stimulus alone.
+            for k in range(actual_batch):
                 single = imgs_bhwc[k:k+1]
                 lat = vae.encode(single)
-                p, _, _, _ = patchify(lat)
-                vectors.append(p.mean(dim=1).cpu().squeeze(0))
+                single_avg = _latent_to_stimulus_vectors(lat, 1)
+                if single_avg is None:
+                    raise RuntimeError(
+                        "VAE encode returned an unsupported latent shape during sharpness calibration"
+                    )
+                vectors.append(single_avg.squeeze(0))
 
         pbar.update(actual_batch)
 
     # Stack all vectors: [N, 64]
     X = torch.stack(vectors, dim=0).float()
+    if X.shape[0] != total_images:
+        raise RuntimeError(
+            f"Sharpness calibration expected {total_images} vectors but collected {X.shape[0]}"
+        )
     print(f"[LCS Sharpness Calibration] Collected {X.shape[0]} vectors of dimension {X.shape[1]}")
 
     # Remove LCS color component FIRST, in the raw space where LCS was calibrated.
